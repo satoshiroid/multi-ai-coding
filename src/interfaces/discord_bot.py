@@ -44,31 +44,60 @@ def build_bot(
     async def on_ready() -> None:
         print(f"Logged in as {bot.user}")
 
+    # Track threads we've already started a pipeline for (avoid duplicates).
+    _started: set[int] = set()
+
+    async def _start_pipeline(thread: discord.Thread, requirement: str) -> None:
+        if thread.id in _started:
+            return
+        _started.add(thread.id)
+        print(f"[bot] pipeline start thread={thread.id} req={requirement!r:.60}")
+        channel = DiscordChannel(bot, forum_channel_id, owner_user_id)
+        orchestrator = build_orchestrator(
+            settings, agents_cfg, channel=channel, state_db_path=state_db_path
+        )
+        channel.attach_manager(orchestrator.hitl)
+        asyncio.create_task(orchestrator.run(requirement, thread_id=str(thread.id)))
+
     @bot.event
     async def on_thread_create(thread: discord.Thread) -> None:
         """Start a pipeline for each new thread in our forum channel."""
+        print(f"[bot] on_thread_create parent={thread.parent_id} expected={forum_channel_id}")
         if thread.parent_id != forum_channel_id:
             return
-
-        # The thread's first message is the requirement; fall back to its title.
+        # Wait briefly so the first message is available in history.
+        await asyncio.sleep(1)
         requirement = thread.name or ""
         try:
             async for msg in thread.history(limit=1, oldest_first=True):
                 if msg.content:
                     requirement = msg.content
                 break
-        except Exception:  # noqa: BLE001 - history may be empty/unavailable yet
-            pass
+        except Exception as exc:  # noqa: BLE001
+            print(f"[bot] history read failed: {exc}")
+        await _start_pipeline(thread, requirement)
 
-        channel = DiscordChannel(bot, forum_channel_id, owner_user_id)
-        orchestrator = build_orchestrator(
-            settings, agents_cfg, channel=channel, state_db_path=state_db_path
-        )
-        # The view needs the manager to resolve gate futures on button clicks.
-        channel.attach_manager(orchestrator.hitl)
-
-        # Run in the background so an awaited HITL gate never blocks the loop.
-        asyncio.create_task(orchestrator.run(requirement, thread_id=str(thread.id)))
+    @bot.event
+    async def on_message(message: discord.Message) -> None:
+        """Fallback: detect the first message posted to a new forum thread."""
+        if message.author == bot.user:
+            return
+        thread = message.channel
+        if not isinstance(thread, discord.Thread):
+            return
+        if thread.parent_id != forum_channel_id:
+            return
+        # Only trigger on the very first message (starter_message or position 0).
+        if thread.id in _started:
+            return
+        # Check if this looks like the opening post of the thread.
+        if message.id == thread.id or (hasattr(thread, "starter_message") and
+                                        thread.starter_message and
+                                        thread.starter_message.id == message.id):
+            await _start_pipeline(thread, message.content or thread.name or "")
+            return
+        # Fallback: start pipeline on any first message in an unstarted thread.
+        await _start_pipeline(thread, message.content or thread.name or "")
 
     return bot
 
