@@ -43,6 +43,10 @@ def build_bot(
     @bot.event
     async def on_ready() -> None:
         print(f"Logged in as {bot.user}")
+        for guild in bot.guilds:
+            print(f"[bot] guild={guild.name} id={guild.id}")
+            for ch in guild.channels:
+                print(f"[bot]   channel={ch.name} id={ch.id} type={type(ch).__name__}")
 
     # Track threads we've already started a pipeline for (avoid duplicates).
     _started: set[int] = set()
@@ -80,6 +84,7 @@ def build_bot(
     @bot.event
     async def on_message(message: discord.Message) -> None:
         """Fallback: detect the first message posted to a new forum thread."""
+        print(f"[bot] on_message: channel={message.channel} type={type(message.channel).__name__} author={message.author}")
         if message.author == bot.user:
             return
         thread = message.channel
