@@ -43,12 +43,24 @@ class AnthropicProvider(LLMProvider):
             if m.role in ("user", "assistant")
         ]
 
+        # claude-opus-4 and claude-sonnet-4 series deprecated the temperature
+        # parameter (extended-thinking models default to 1.0 and ignore it).
+        # Only include temperature for older model families.
+        _model = self.config.model.lower()
+        _skip_temp = any(
+            _model.startswith(prefix)
+            for prefix in ("claude-opus-4", "claude-sonnet-4", "claude-haiku-4")
+        )
+        extra: dict[str, Any] = {}
+        if not _skip_temp:
+            extra["temperature"] = opts.get("temperature", self.config.temperature)
+
         resp = await client.messages.create(
             model=self.config.model,
             max_tokens=opts.get("max_tokens", self.config.max_tokens),
-            temperature=opts.get("temperature", self.config.temperature),
             system="\n\n".join(system_parts) if system_parts else "",
             messages=chat,
+            **extra,
         )
 
         text = "".join(

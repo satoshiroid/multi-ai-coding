@@ -13,13 +13,13 @@ tiers:
     model: claude-opus-4-8
     fallback:
       provider: gemini
-      model: gemini-2.0-pro
+      model: gemini-2.0-flash
   L2:                              # Senior design manager
     provider: anthropic
     model: claude-sonnet-4-6
     fallback:
       provider: gemini
-      model: gemini-2.0-pro
+      model: gemini-2.0-flash
   L3:                              # Workers (implement / debug / tool ops)
     provider: gemini
     model: gemini-2.0-flash
