@@ -7,6 +7,12 @@ view in :mod:`src.hitl.channels.discord_channel`, so the bot's only job is to
 construct a :class:`DiscordChannel` + orchestrator per project and keep the two
 wired together via ``attach_manager``. The pipeline runs as a background task so
 a long-running gate never blocks the event loop.
+
+Thread detection uses two complementary strategies:
+1. ``on_thread_create`` / ``on_message`` gateway events (fast but unreliable for
+   forum channels when the bot is not yet a thread member).
+2. A background poll loop calling ``guild.active_threads()`` every 15 s (reliable
+   HTTP-API fallback that catches any thread the gateway missed).
 """
 
 from __future__ import annotations
@@ -40,14 +46,6 @@ def build_bot(
     from src.hitl.channels.discord_channel import DiscordChannel
     from src.orchestrator.builder import build_orchestrator
 
-    @bot.event
-    async def on_ready() -> None:
-        print(f"Logged in as {bot.user}")
-        for guild in bot.guilds:
-            print(f"[bot] guild={guild.name} id={guild.id}")
-            for ch in guild.channels:
-                print(f"[bot]   channel={ch.name} id={ch.id} type={type(ch).__name__}")
-
     # Track threads we've already started a pipeline for (avoid duplicates).
     _started: set[int] = set()
 
@@ -63,14 +61,7 @@ def build_bot(
         channel.attach_manager(orchestrator.hitl)
         asyncio.create_task(orchestrator.run(requirement, thread_id=str(thread.id)))
 
-    @bot.event
-    async def on_thread_create(thread: discord.Thread) -> None:
-        """Start a pipeline for each new thread in our forum channel."""
-        print(f"[bot] on_thread_create parent={thread.parent_id} expected={forum_channel_id}")
-        if thread.parent_id != forum_channel_id:
-            return
-        # Wait briefly so the first message is available in history.
-        await asyncio.sleep(1)
+    async def _get_requirement(thread: discord.Thread) -> str:
         requirement = thread.name or ""
         try:
             async for msg in thread.history(limit=1, oldest_first=True):
@@ -79,12 +70,56 @@ def build_bot(
                 break
         except Exception as exc:  # noqa: BLE001
             print(f"[bot] history read failed: {exc}")
+        return requirement
+
+    async def _poll_forum() -> None:
+        """Background loop: use HTTP API to detect new threads the gateway missed."""
+        await bot.wait_until_ready()
+        while not bot.is_closed():
+            try:
+                for guild in bot.guilds:
+                    threads = await guild.active_threads()
+                    for thread in threads:
+                        if thread.parent_id != forum_channel_id:
+                            continue
+                        if thread.id in _started:
+                            continue
+                        print(f"[bot] poll: new thread id={thread.id} name={thread.name!r}")
+                        requirement = await _get_requirement(thread)
+                        await _start_pipeline(thread, requirement)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[bot] poll error: {exc}")
+            await asyncio.sleep(15)
+
+    @bot.event
+    async def on_ready() -> None:
+        print(f"Logged in as {bot.user}")
+        # Pre-populate _started so existing threads are not re-processed on restart.
+        try:
+            for guild in bot.guilds:
+                existing = await guild.active_threads()
+                for thread in existing:
+                    if thread.parent_id == forum_channel_id:
+                        _started.add(thread.id)
+                        print(f"[bot] pre-loaded thread id={thread.id} name={thread.name!r}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[bot] pre-load error: {exc}")
+        asyncio.create_task(_poll_forum())
+        print("[bot] poll loop started (15s interval)")
+
+    @bot.event
+    async def on_thread_create(thread: discord.Thread) -> None:
+        """Fast path: gateway event for thread creation (may not fire for forums)."""
+        print(f"[bot] on_thread_create parent={thread.parent_id} expected={forum_channel_id}")
+        if thread.parent_id != forum_channel_id:
+            return
+        await asyncio.sleep(1)
+        requirement = await _get_requirement(thread)
         await _start_pipeline(thread, requirement)
 
     @bot.event
     async def on_message(message: discord.Message) -> None:
         """Fallback: detect the first message posted to a new forum thread."""
-        print(f"[bot] on_message: channel={message.channel} type={type(message.channel).__name__} author={message.author}")
         if message.author == bot.user:
             return
         thread = message.channel
@@ -92,16 +127,9 @@ def build_bot(
             return
         if thread.parent_id != forum_channel_id:
             return
-        # Only trigger on the very first message (starter_message or position 0).
         if thread.id in _started:
             return
-        # Check if this looks like the opening post of the thread.
-        if message.id == thread.id or (hasattr(thread, "starter_message") and
-                                        thread.starter_message and
-                                        thread.starter_message.id == message.id):
-            await _start_pipeline(thread, message.content or thread.name or "")
-            return
-        # Fallback: start pipeline on any first message in an unstarted thread.
+        print(f"[bot] on_message trigger thread={thread.id}")
         await _start_pipeline(thread, message.content or thread.name or "")
 
     return bot
