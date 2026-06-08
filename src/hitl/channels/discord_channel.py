@@ -91,9 +91,11 @@ class DiscordChannel(BaseChannel):
         await thread.send(embed=embed, view=view)
 
     async def push_progress(self, thread_id: str, message: str) -> None:
-        """Post a plain-text progress update to the thread."""
+        """Post a plain-text progress update to the thread, splitting at 1900 chars."""
         thread = await self._fetch_thread(thread_id)
-        await thread.send(message)
+        limit = 1900
+        for i in range(0, max(len(message), 1), limit):
+            await thread.send(message[i : i + limit])
 
     # ------------------------------------------------------------------ #
     # helpers
