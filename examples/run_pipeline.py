@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import load_agents, load_env, load_settings, resolve_state_db_path
 from src.hitl.channels.cli_channel import CliChannel
 from src.orchestrator.builder import build_orchestrator
+from workflows.manufacturing_pipeline import APP_PIPELINE, PIPELINE, stage_count
 
 
 async def _main(requirement: str, *, mock: bool, auto_approve: bool) -> int:
@@ -30,7 +31,7 @@ async def _main(requirement: str, *, mock: bool, auto_approve: bool) -> int:
     agents_cfg = load_agents()
     db_path = resolve_state_db_path(settings)
 
-    channel = CliChannel(auto_approve=auto_approve or mock)
+    channel = CliChannel(auto_approve=auto_approve)
     orchestrator = build_orchestrator(
         settings,
         agents_cfg,
@@ -40,10 +41,12 @@ async def _main(requirement: str, *, mock: bool, auto_approve: bool) -> int:
     )
 
     state = await orchestrator.run(requirement)
+    total = stage_count(APP_PIPELINE if state.project_type == "app" else PIPELINE)
     print("\n" + "=" * 60)
     print(f"Project   : {state.project_id}")
+    print(f"Type      : {state.project_type}")
     print(f"Status    : {state.status.value}")
-    print(f"Stage     : {state.current_stage}/9")
+    print(f"Stage     : {state.current_stage}/{total}")
     print(f"Domains   : {', '.join(state.results.keys())}")
     print(f"BOM lines : {len(state.bom)}  total cost: {orchestrator.context.total_cost()}")
     print("=" * 60)

@@ -58,12 +58,22 @@ class ContextStore:
     # BOM (append semantics — each domain adds its parts)
     # ------------------------------------------------------------------ #
     def append_bom(self, items: list[BomItem]) -> None:
-        """Append parts to the bill of materials.
+        """Merge parts into the bill of materials.
 
-        Append (not overwrite) because the BOM is the union of every domain's
-        contributions; replacing it would discard parts owned by other domains.
+        The BOM is the union of every domain's contributions, but the same
+        domain can legitimately run at multiple stages (e.g. circuit at the
+        engineering and manufacturing stages) and re-list its parts — so a
+        line is keyed by ``(domain, part_number)`` and a later entry *replaces*
+        the earlier one rather than double-counting it.
         """
-        self._bom.extend(items)
+        for item in items:
+            key = (item.domain, item.part_number)
+            for i, existing in enumerate(self._bom):
+                if (existing.domain, existing.part_number) == key:
+                    self._bom[i] = item
+                    break
+            else:
+                self._bom.append(item)
 
     def bom(self) -> list[BomItem]:
         """Return a shallow copy of the accumulated BOM."""

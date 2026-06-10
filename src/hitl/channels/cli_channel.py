@@ -87,38 +87,49 @@ class CliChannel(BaseChannel):
         line from stdin in a worker thread (via :func:`asyncio.to_thread`) so
         the event loop is not blocked while waiting for the human, parsing:
 
-        * ``a``            -> APPROVE
+        * ``a`` / Enter    -> APPROVE
         * ``r <feedback>`` -> REVISE (remainder is captured as feedback)
         * ``x``            -> REJECT
+        * anything else    -> re-prompt (a typo must never silently approve)
         """
         if self.auto_approve:
             return HitlResponse(
                 request_id=request.request_id, decision=HitlDecision.APPROVE
             )
 
-        raw = await asyncio.to_thread(
-            input, "Decision [a=approve, r <feedback>=revise, x=reject]: "
-        )
-        return self._parse_decision(request.request_id, raw)
+        while True:
+            raw = await asyncio.to_thread(
+                input, "Decision [a/Enter=approve, r <feedback>=revise, x=reject]: "
+            )
+            response = self._parse_decision(request.request_id, raw)
+            if response is not None:
+                return response
+            _emit("認識できない入力です: a=承認 / r 修正内容=修正 / x=却下")
 
     # ------------------------------------------------------------------ #
     # helpers
     # ------------------------------------------------------------------ #
     @staticmethod
-    def _parse_decision(request_id: str, raw: str) -> HitlResponse:
+    def _parse_decision(request_id: str, raw: str) -> HitlResponse | None:
+        """Parse one input line; ``None`` means unrecognized (caller re-prompts).
+
+        An approval gate guards irreversible progress, so a typo must never
+        silently approve — only an explicit token (or bare Enter) does.
+        """
         text = raw.strip()
         lowered = text.lower()
-        if lowered == "x":
+        if lowered in ("x", "reject", "却下"):
             return HitlResponse(request_id=request_id, decision=HitlDecision.REJECT)
-        if lowered == "r" or lowered.startswith("r "):
-            feedback = text[1:].strip() or None
+        if lowered == "r" or lowered.startswith("r ") or lowered.startswith("修正"):
+            feedback = text[1:].strip() if lowered.startswith("r") else text[2:].strip()
             return HitlResponse(
                 request_id=request_id,
                 decision=HitlDecision.REVISE,
-                feedback=feedback,
+                feedback=feedback or None,
             )
-        # Default (including "a" or empty) to approve.
-        return HitlResponse(request_id=request_id, decision=HitlDecision.APPROVE)
+        if lowered in ("", "a", "approve", "承認"):
+            return HitlResponse(request_id=request_id, decision=HitlDecision.APPROVE)
+        return None
 
     @staticmethod
     def _render_bom(request: HitlRequest) -> None:

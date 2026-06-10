@@ -66,6 +66,12 @@ _DEFAULT_RESPONSES: dict[str, dict[str, Any]] = {
         "artifacts": {},
         "metadata": {},
     },
+    "senior": {
+        "resolved": True,
+        "guidance": "制約を見直し、寸法を明示して再生成してください",
+        "escalate_to_owner": False,
+        "reason": "",
+    },
 }
 
 
@@ -85,18 +91,34 @@ class MockProvider(LLMProvider):
         self.calls: list[list[LlmMessage]] = []
 
     def _infer_domain(self, messages: list[LlmMessage]) -> str:
-        blob = " ".join(m.content for m in messages).lower()
-        # Prefer explicit english domain keywords, then japanese role hints.
+        blob = " ".join(m.content for m in messages)
+
+        # 1. The worker prompt's explicit task header is authoritative — the
+        #    shared context may mention *other* domains (e.g. mecha constraints
+        #    inside a circuit task at stage 8), so whole-blob keyword scanning
+        #    misattributes those calls.
+        header = re.search(r"# Task \((design|mecha|circuit|software)\)", blob)
+        if header:
+            return header.group(1)
+
+        # 2. Role-specific schema markers (appended by complete_structured).
+        if "escalate_to_owner" in blob:
+            return "senior"
+        if "project_type" in blob:
+            return "pm"
+
+        # 3. Fallback: keyword scan for free-form prompts.
+        lowered = blob.lower()
         for key in ("design", "mecha", "circuit", "software", "pm"):
-            if re.search(rf"\b{key}\b", blob):
+            if re.search(rf"\b{key}\b", lowered):
                 return key
-        if "回路" in blob:
+        if "回路" in lowered:
             return "circuit"
-        if "メカ" in blob or "筐体" in blob:
+        if "メカ" in lowered or "筐体" in lowered:
             return "mecha"
-        if "デザイン" in blob or "意匠" in blob:
+        if "デザイン" in lowered or "意匠" in lowered:
             return "design"
-        if "ファーム" in blob or "ソフト" in blob:
+        if "ファーム" in lowered or "ソフト" in lowered:
             return "software"
         return "pm"
 

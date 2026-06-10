@@ -65,3 +65,27 @@ def test_snapshot_is_jsonable():
     store.set_constraint(Constraint(name="z", value=25.0, owner_domain=Domain.MECHA))
     snap = store.snapshot()
     assert "constraints" in snap and "bom" in snap and "total_cost" in snap
+
+
+def test_bom_same_part_replaces_not_duplicates():
+    """The same domain re-listing a part (multi-stage run) must not double-count."""
+    store = ContextStore()
+    store.append_bom([BomItem(domain=Domain.CIRCUIT, part_number="ESP32", description="MCU", quantity=1, unit_cost=3.5)])
+    store.append_bom([BomItem(domain=Domain.CIRCUIT, part_number="ESP32", description="MCU", quantity=1, unit_cost=3.5)])
+    assert len(store.bom()) == 1
+    assert store.total_cost() == 3.5
+
+
+def test_bom_same_part_number_different_domain_kept():
+    store = ContextStore()
+    store.append_bom([BomItem(domain=Domain.CIRCUIT, part_number="M3", description="standoff", quantity=4, unit_cost=0.1)])
+    store.append_bom([BomItem(domain=Domain.MECHA, part_number="M3", description="screw", quantity=4, unit_cost=0.25)])
+    assert len(store.bom()) == 2
+
+
+def test_bom_later_entry_updates_quantity_and_cost():
+    store = ContextStore()
+    store.append_bom([BomItem(domain=Domain.CIRCUIT, part_number="R1", description="res", quantity=2, unit_cost=0.5)])
+    store.append_bom([BomItem(domain=Domain.CIRCUIT, part_number="R1", description="res", quantity=4, unit_cost=0.4)])
+    assert len(store.bom()) == 1
+    assert store.total_cost() == 1.6

@@ -161,7 +161,7 @@ uvicorn src.interfaces.api:app --host 0.0.0.0 --port 8000
 ## テスト
 
 ```bash
-# 全テスト実行（54件）
+# 全テスト実行（64件）
 pytest tests/ -v
 
 # モック E2E のみ

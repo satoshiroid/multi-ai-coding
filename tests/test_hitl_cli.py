@@ -71,3 +71,30 @@ async def test_channel_property_exposes_channel():
     ch = _SilentChannel()
     mgr = HitlManager(ch, timeout_hours=1)
     assert mgr.channel is ch
+
+
+# ── CLI decision parsing ────────────────────────────────────────────────── #
+
+def test_parse_decision_approve_tokens():
+    for raw in ("a", "A", "", "approve", "承認"):
+        resp = CliChannel._parse_decision("r1", raw)
+        assert resp is not None and resp.decision == HitlDecision.APPROVE
+
+
+def test_parse_decision_reject_tokens():
+    for raw in ("x", "reject", "却下"):
+        resp = CliChannel._parse_decision("r1", raw)
+        assert resp is not None and resp.decision == HitlDecision.REJECT
+
+
+def test_parse_decision_revise_with_feedback():
+    resp = CliChannel._parse_decision("r1", "r 通気孔を追加して")
+    assert resp is not None
+    assert resp.decision == HitlDecision.REVISE
+    assert resp.feedback == "通気孔を追加して"
+
+
+def test_parse_decision_unrecognized_returns_none():
+    """A typo must NOT silently approve — caller re-prompts on None."""
+    for raw in ("z", "yes", "ok", "approv e"):
+        assert CliChannel._parse_decision("r1", raw) is None

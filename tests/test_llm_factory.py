@@ -77,3 +77,47 @@ async def test_mock_provider_structured_output():
     )
     assert "confidence_score" in data
     assert 0 <= data["confidence_score"] <= 100
+
+
+@pytest.mark.asyncio
+async def test_mock_infers_domain_from_task_header_not_context():
+    """Stage-8 scenario: the context mentions mecha, but the task header is
+    circuit — the canned circuit response must be returned, not mecha's."""
+    from src.models import LlmMessage
+
+    provider = MockProvider()
+    prompt = (
+        "# Task (circuit)\n承認済み仕様に基づき製造データを確定してください。\n\n"
+        "# Context (shared constraints / prior results)\n"
+        '{"constraints": {"inner_dim_x_mm": {"owner_domain": "mecha"}}}'
+    )
+    data = await provider.complete_structured([LlmMessage(role="user", content=prompt)])
+    assert "pcb_dim_x_mm" in data.get("metadata", {})  # circuit canned response
+
+
+@pytest.mark.asyncio
+async def test_mock_infers_pm_from_schema_marker():
+    """The PM planning prompt lists every domain name, but the project_type
+    schema marker must route it to the pm canned response."""
+    from src.models import LlmMessage
+
+    provider = MockProvider()
+    prompt = (
+        "Decompose this. Domains: design, mecha, circuit, software.\n"
+        'Schema: {"project_type": "hardware" | "app", ...}'
+    )
+    data = await provider.complete_structured([LlmMessage(role="user", content=prompt)])
+    assert data.get("project_type") == "hardware"  # pm canned response
+
+
+@pytest.mark.asyncio
+async def test_mock_infers_senior_from_schema_marker():
+    from src.models import LlmMessage
+
+    provider = MockProvider()
+    prompt = (
+        "# Escalated task (mecha)\n低信頼の結果をレビュー。\n"
+        'Schema: {"resolved": bool, "guidance": str, "escalate_to_owner": bool}'
+    )
+    data = await provider.complete_structured([LlmMessage(role="user", content=prompt)])
+    assert "guidance" in data and "escalate_to_owner" in data
