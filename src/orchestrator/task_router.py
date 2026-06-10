@@ -61,9 +61,25 @@ def _default_instruction(domain: Domain, plan: dict[str, Any]) -> str:
     """Fallback instruction when the PM didn't emit a per-domain subtask."""
     summary = plan.get("summary", "")
     base = {
-        Domain.DESIGN: "製品の外観コンセプトデザインとレンダリングを生成してください。",
-        Domain.MECHA: "スプレッドシート駆動でパラメトリックな筐体ソリッドを作成してください。",
-        Domain.CIRCUIT: "回路ブロックを組み立て、PCB配置・配線・BOMを生成してください。",
-        Domain.SOFTWARE: "回路出力に基づき組み込みファームウェアとテストを生成してください。",
+        Domain.DESIGN: (
+            "製品の外観コンセプトデザインとレンダリングを生成してください。\n"
+            "artifacts: 外観仕様のみ（コード不要）。"
+        ),
+        Domain.MECHA: (
+            "筐体のパラメトリック設計仕様を生成してください（コード・スクリプト不要）。\n"
+            "【必須】metadata に以下の数値(mm)を必ず含めること:\n"
+            "  inner_dim_x_mm, inner_dim_y_mm, inner_dim_z_mm\n"
+            "artifacts: 外形寸法・材質・公差などのキースペックのみ。"
+        ),
+        Domain.CIRCUIT: (
+            "回路ブロック・PCBレイアウト仕様を生成してください（コード不要）。\n"
+            "【必須】metadata に以下の数値(mm)を必ず含めること:\n"
+            "  pcb_dim_x_mm, pcb_dim_y_mm\n"
+            "artifacts: 主要部品・MCU・インターフェース仕様のみ。"
+        ),
+        Domain.SOFTWARE: (
+            "ファームウェアの設計仕様とキーロジックを生成してください（完全コード不要）。\n"
+            "artifacts: アーキテクチャ・主要モジュール・インターフェース仕様のみ。"
+        ),
     }[domain]
     return f"{base}\n\n# プロジェクト概要\n{summary}".strip()

@@ -164,23 +164,33 @@ class PMOrchestrator:
         """L3 confidence too low → ask L2; if L2 can't resolve, ask the owner."""
         await self._progress(
             state,
-            f"⚠️ {task.domain.value} の信頼度が低い({result.confidence_score})ためL2へエスカレーション",
+            f"⚠️ {task.domain.value} の信頼度が低い({result.confidence_score})ためL2へエスカレーション\n"
+            f"　L3サマリー: {result.summary[:120]}",
         )
         advice = await self.senior.advise(task, result)
 
         if advice.get("escalate_to_owner"):
-            # L2 couldn't resolve — surface the decision to the owner.
+            reason = advice.get("reason", "L2が解決できませんでした。")
+            await self._progress(
+                state,
+                f"🔺 L2判断: オーナー判断が必要\n　理由: {reason[:200]}",
+            )
             req = HitlRequest(
                 request_id=f"esc-{uuid.uuid4().hex[:8]}",
                 project_id=state.project_id,
                 gate=f"escalation_{task.domain.value}",
                 title=f"エスカレーション: {task.domain.value}",
-                body=advice.get("reason", "L2が解決できませんでした。"),
+                body=reason,
             )
             response = await self.hitl.request(state.thread_id or state.project_id, req)
             feedback = response.feedback or advice.get("guidance", "")
         else:
-            feedback = advice.get("guidance", "")
+            guidance = advice.get("guidance", "")
+            await self._progress(
+                state,
+                f"💡 L2ガイダンス ({task.domain.value}): {guidance[:200]}",
+            )
+            feedback = guidance
 
         # Re-run the worker once with the guidance folded in as feedback.
         retry = TaskSpec(
@@ -190,7 +200,13 @@ class PMOrchestrator:
             context=task.context,
             feedback=feedback,
         )
-        return await self.workers[task.domain].execute(retry)
+        retry_result = await self.workers[task.domain].execute(retry)
+        await self._progress(
+            state,
+            f"🔄 {task.domain.value} 再実行完了: {retry_result.summary[:120]} "
+            f"(信頼度 {retry_result.confidence_score})",
+        )
+        return retry_result
 
     # ------------------------------------------------------------------ #
     # Consistency

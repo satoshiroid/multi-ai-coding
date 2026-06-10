@@ -20,7 +20,8 @@ from src.models import AgentResult, Domain, TaskSpec
 # domains stay in sync with the AgentResult schema.
 _RESULT_SCHEMA_HINT = (
     '{"summary": str, "confidence_score": int (0-100), '
-    '"artifacts": object, "metadata": object}'
+    '"artifacts": object (compact specs only — NO code/scripts/long lists), '
+    '"metadata": object (numeric dimensions in mm when applicable, e.g. inner_dim_x_mm)}'
 )
 
 
