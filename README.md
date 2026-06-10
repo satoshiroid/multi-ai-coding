@@ -221,7 +221,7 @@ multi-ai-coding/
 ├── examples/
 │   ├── run_pipeline.py      # CLI エントリポイント
 │   └── run_server.py        # 本番サーバー起動
-├── tests/                   # 38 テスト（全モック）
+├── tests/                   # 64 テスト（全モック）
 ├── requirements.txt
 ├── pytest.ini
 └── .env.example
@@ -231,7 +231,7 @@ multi-ai-coding/
 
 - **ハブ&スポーク**: ワーカー間直接通信禁止。制約違反の連鎖増幅を防止
 - **confidence_score 契約**: 全 L3 出力は `{summary, confidence_score, artifacts, metadata}` の JSON
-- **共有コンテキスト**: 寸法は上書き (overwrite)、BOM は追記 (append) の 2 モード
+- **共有コンテキスト**: 寸法は上書き (overwrite)、BOM は (domain, part_number) キーのマージ（同一部品の再掲は置換し二重計上を防止）
 - **整合性チェック**: 筐体内寸 ≥ 基板外寸 + 2×クリアランス (1.0mm) を数値保証
 - **HITL ゲート**: `asyncio.Future` で非ブロッキング待機。72h タイムアウト後にセーフ停止
 - **MCP 接続**: 既存の成熟した MCP サーバーへの接続アダプタのみ実装（CAD 制御は委譲）
