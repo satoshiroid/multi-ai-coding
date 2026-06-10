@@ -58,6 +58,7 @@ class TaskSpec(BaseModel):
     instruction: str
     context: dict[str, Any] = Field(default_factory=dict)
     feedback: str | None = None          # owner/senior feedback on a re-run
+    allow_code: bool = False             # implementation stages may emit code files
     created_at: datetime = Field(default_factory=_utcnow)
 
 
@@ -163,6 +164,7 @@ class ProjectState(BaseModel):
     project_id: str
     thread_id: str | None = None         # Discord forum thread id
     requirement: str = ""
+    project_type: str = "hardware"       # "hardware" | "app" (PM decides at stage 2)
     current_stage: int = 0
     status: StageStatus = StageStatus.PENDING
     constraints: dict[str, Constraint] = Field(default_factory=dict)

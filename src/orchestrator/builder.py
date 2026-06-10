@@ -66,6 +66,7 @@ def build_orchestrator(
         transport=str(blender_cfg.get("transport", "stdio")),
         command=blender_cfg.get("command") or None,
         args=list(blender_cfg.get("args", [])),
+        url=blender_cfg.get("url") or None,
     ) if blender_cfg else None
 
     workers: dict[Domain, BaseWorker] = {}

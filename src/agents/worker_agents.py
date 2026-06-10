@@ -32,6 +32,16 @@ _DESIGN_SCHEMA_HINT = (
     '"metadata": object}'
 )
 
+# Implementation stages (task.allow_code=True): code files are allowed but must
+# stay compact — the hard cap protects against max_tokens JSON truncation.
+_CODE_SCHEMA_HINT = (
+    '{"summary": str, "confidence_score": int (0-100), '
+    '"artifacts": {"files": {"relative/path.ext": "file content (code)"}, '
+    '"setup": str (brief setup/run instructions)}, '
+    '"metadata": object} '
+    '— keep total code under ~200 lines so the JSON is never truncated'
+)
+
 
 def _clamp_score(value: Any) -> int:
     """Coerce an arbitrary LLM value into a valid 0-100 confidence score.
@@ -83,8 +93,9 @@ class BaseWorker(BaseAgent):
     async def execute(self, task: TaskSpec) -> AgentResult:
         """Run the task and normalise the LLM output into an AgentResult."""
         prompt = self._build_prompt(task)
+        schema_hint = _CODE_SCHEMA_HINT if task.allow_code else _RESULT_SCHEMA_HINT
         try:
-            data = await self.run_structured(prompt, schema_hint=_RESULT_SCHEMA_HINT)
+            data = await self.run_structured(prompt, schema_hint=schema_hint)
         except (ValueError, json.JSONDecodeError) as exc:
             # Truncated / malformed JSON: return a zero-confidence result so the
             # pipeline continues and L2 escalation handles the retry.
