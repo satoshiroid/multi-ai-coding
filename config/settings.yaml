@@ -9,14 +9,14 @@
 # Per-tier LLM assignment (hybrid cost strategy by default).
 tiers:
   L1:                              # PM / Orchestrator
-    provider: anthropic
-    model: claude-opus-4-8
+    provider: gemini
+    model: gemini-2.0-flash
     fallback:
       provider: gemini
       model: gemini-2.0-flash
   L2:                              # Senior design manager
-    provider: anthropic
-    model: claude-sonnet-4-6
+    provider: gemini
+    model: gemini-2.0-flash
     fallback:
       provider: gemini
       model: gemini-2.0-flash
@@ -24,8 +24,8 @@ tiers:
     provider: gemini
     model: gemini-2.0-flash
     fallback:
-      provider: anthropic
-      model: claude-haiku-4-5-20251001
+      provider: gemini
+      model: gemini-2.0-flash
 
 # Provider connection defaults. API keys/URLs come from environment vars.
 providers:
@@ -63,7 +63,7 @@ hitl:
 # leave `enabled: false` to use the built-in mock transport (CI / no-CAD env).
 mcp:
   blender:
-    enabled: false
+    enabled: true
     transport: stdio
     command: blenderlm
     args: ["serve"]

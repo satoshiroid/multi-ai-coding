@@ -62,8 +62,10 @@ def _default_instruction(domain: Domain, plan: dict[str, Any]) -> str:
     summary = plan.get("summary", "")
     base = {
         Domain.DESIGN: (
-            "製品の外観コンセプトデザインとレンダリングを生成してください。\n"
-            "artifacts: 外観仕様のみ（コード不要）。"
+            "製品の外観コンセプトデザインを生成してください。\n"
+            "artifacts.blender_script: 製品の3Dモックアップを作成するBlender Pythonスクリプト"
+            "（40行以内・基本プリミティブのみ・bpy使用・シーンクリア→モデル作成→マテリアル設定のみ）。\n"
+            "artifacts.design_spec: 外観仕様（コンパクト）。"
         ),
         Domain.MECHA: (
             "筐体のパラメトリック設計仕様を生成してください（コード・スクリプト不要）。\n"

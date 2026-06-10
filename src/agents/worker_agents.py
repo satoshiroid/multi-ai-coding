@@ -10,18 +10,26 @@ crashing the pipeline.
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 from src.agents.base_agent import BaseAgent
 from src.llm.factory import TieredLLM
 from src.models import AgentResult, Domain, TaskSpec
 
-# JSON contract every worker asks the LLM to honour. Centralised so all four
-# domains stay in sync with the AgentResult schema.
+# JSON contract for non-design workers (no code allowed).
 _RESULT_SCHEMA_HINT = (
     '{"summary": str, "confidence_score": int (0-100), '
     '"artifacts": object (compact specs only — NO code/scripts/long lists), '
     '"metadata": object (numeric dimensions in mm when applicable, e.g. inner_dim_x_mm)}'
+)
+
+# Design worker allows a short blender_script in artifacts.
+_DESIGN_SCHEMA_HINT = (
+    '{"summary": str, "confidence_score": int (0-100), '
+    '"artifacts": {"blender_script": str (minimal Blender Python, under 40 lines), '
+    '"design_spec": object (compact design spec)}, '
+    '"metadata": object}'
 )
 
 
@@ -105,9 +113,76 @@ class BaseWorker(BaseAgent):
 
 
 class DesignWorker(BaseWorker):
-    """Industrial design (Blender)."""
+    """Industrial design (Blender). Optionally renders via Blender MCP."""
 
     domain = Domain.DESIGN
+
+    def __init__(self, name: str, system_prompt: str, llm: TieredLLM, blender_spec: Any = None):
+        super().__init__(name=name, system_prompt=system_prompt, llm=llm)
+        self._blender_spec = blender_spec
+
+    async def execute(self, task: TaskSpec) -> AgentResult:
+        prompt = self._build_prompt(task)
+        try:
+            data = await self.run_structured(prompt, schema_hint=_DESIGN_SCHEMA_HINT)
+        except (ValueError, json.JSONDecodeError) as exc:
+            return AgentResult(
+                task_id=task.task_id,
+                domain=self.domain,
+                summary=f"(JSON parse error: {exc})",
+                confidence_score=0,
+                artifacts={},
+                metadata={"parse_error": str(exc)},
+            )
+
+        summary = data.get("summary") or "(no summary produced)"
+        artifacts = data.get("artifacts") or {}
+        metadata = data.get("metadata") or {}
+        if not isinstance(artifacts, dict):
+            artifacts = {"value": artifacts}
+        if not isinstance(metadata, dict):
+            metadata = {"value": metadata}
+
+        result = AgentResult(
+            task_id=task.task_id,
+            domain=self.domain,
+            summary=str(summary),
+            confidence_score=_clamp_score(data.get("confidence_score", 0)),
+            artifacts=artifacts,
+            metadata=metadata,
+        )
+
+        # If Blender MCP is enabled and LLM produced a script, render it.
+        if self._blender_spec is not None and getattr(self._blender_spec, "enabled", False):
+            script = artifacts.get("blender_script", "")
+            if script:
+                await self._render_blender(task.task_id, script, result)
+
+        return result
+
+    async def _render_blender(self, task_id: str, script: str, result: AgentResult) -> None:
+        """Execute script in Blender and attach the render path to result."""
+        from src.mcp.blender_client import BlenderClient
+        from src.mcp.client import McpClient
+
+        render_dir = os.path.join(os.getcwd(), "data", "renders")
+        os.makedirs(render_dir, exist_ok=True)
+        render_path = os.path.join(render_dir, f"{task_id}.png")
+
+        try:
+            async with BlenderClient(McpClient(self._blender_spec)) as bl:
+                run_result = await bl.run_python(script)
+                if not run_result.ok:
+                    result.metadata["blender_script_error"] = run_result.error
+                    return
+                render_result = await bl.render(render_path)
+                if render_result.ok:
+                    result.artifacts["render_image"] = render_path
+                    result.metadata["blender_rendered"] = True
+                else:
+                    result.metadata["blender_render_error"] = render_result.error
+        except Exception as exc:
+            result.metadata["blender_error"] = str(exc)
 
 
 class MechaWorker(BaseWorker):
@@ -137,10 +212,21 @@ _WORKER_CLASSES: dict[Domain, type[BaseWorker]] = {
 
 
 def build_worker(
-    domain: Domain, system_prompt: str, llm: TieredLLM, name: str | None = None
+    domain: Domain,
+    system_prompt: str,
+    llm: TieredLLM,
+    name: str | None = None,
+    blender_spec: Any = None,
 ) -> BaseWorker:
     """Instantiate the worker for ``domain`` (defaults name to ``<domain>_worker``)."""
     cls = _WORKER_CLASSES.get(domain)
     if cls is None:
         raise ValueError(f"No worker registered for domain: {domain!r}")
+    if domain == Domain.DESIGN:
+        return cls(
+            name=name or f"{domain.value}_worker",
+            system_prompt=system_prompt,
+            llm=llm,
+            blender_spec=blender_spec,
+        )
     return cls(name=name or f"{domain.value}_worker", system_prompt=system_prompt, llm=llm)

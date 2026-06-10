@@ -15,6 +15,7 @@ from src.hitl import HitlManager
 from src.hitl.channels.base_channel import BaseChannel
 from src.hitl.channels.cli_channel import CliChannel
 from src.llm.factory import build_tiered_llms
+from src.mcp.client import McpServerSpec
 from src.models import Domain
 from src.orchestrator.consistency import ConsistencyChecker
 from src.orchestrator.context_store import ContextStore
@@ -57,6 +58,16 @@ def build_orchestrator(
         llm=llms["L2"],
     )
 
+    # Build Blender MCP spec (injected into DesignWorker when enabled).
+    blender_cfg = settings.get("mcp", {}).get("blender", {})
+    blender_spec = McpServerSpec(
+        name="blender",
+        enabled=bool(blender_cfg.get("enabled", False)),
+        transport=str(blender_cfg.get("transport", "stdio")),
+        command=blender_cfg.get("command") or None,
+        args=list(blender_cfg.get("args", [])),
+    ) if blender_cfg else None
+
     workers: dict[Domain, BaseWorker] = {}
     for key, domain in _WORKER_DOMAINS.items():
         wcfg = agents_cfg["workers"][key]
@@ -65,6 +76,7 @@ def build_orchestrator(
             system_prompt=wcfg["system_prompt"],
             llm=llms["L3"],
             name=f"{key}_worker",
+            blender_spec=blender_spec if domain == Domain.DESIGN else None,
         )
 
     if channel is None:
