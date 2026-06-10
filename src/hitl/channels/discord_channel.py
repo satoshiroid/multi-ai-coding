@@ -91,11 +91,30 @@ class DiscordChannel(BaseChannel):
         await thread.send(embed=embed, view=view)
 
     async def push_progress(self, thread_id: str, message: str) -> None:
-        """Post a plain-text progress update to the thread, splitting at 1900 chars."""
+        """Post a plain-text progress update to the thread.
+
+        Discord counts characters as UTF-16 code units (emoji = 2 units each),
+        so we split by UTF-16 length rather than Python str length.
+        """
         thread = await self._fetch_thread(thread_id)
-        limit = 1900
-        for i in range(0, max(len(message), 1), limit):
-            await thread.send(message[i : i + limit])
+        # 1800 UTF-16 units gives comfortable headroom under Discord's 2000-unit limit.
+        limit_utf16 = 1800
+        chunks: list[str] = []
+        current: list[str] = []
+        current_len = 0
+        for char in message or " ":
+            char_len = len(char.encode("utf-16-le")) // 2
+            if current_len + char_len > limit_utf16:
+                chunks.append("".join(current))
+                current = [char]
+                current_len = char_len
+            else:
+                current.append(char)
+                current_len += char_len
+        if current:
+            chunks.append("".join(current))
+        for chunk in chunks:
+            await thread.send(chunk)
 
     # ------------------------------------------------------------------ #
     # helpers
