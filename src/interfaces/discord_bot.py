@@ -59,7 +59,21 @@ def build_bot(
             settings, agents_cfg, channel=channel, state_db_path=state_db_path
         )
         channel.attach_manager(orchestrator.hitl)
-        asyncio.create_task(orchestrator.run(requirement, thread_id=str(thread.id)))
+
+        async def _run_safe() -> None:
+            try:
+                await orchestrator.run(requirement, thread_id=str(thread.id))
+            except Exception as exc:
+                print(f"[pipeline] fatal error thread={thread.id}: {type(exc).__name__}: {exc}")
+                try:
+                    await channel.push_progress(
+                        str(thread.id),
+                        f"❌ パイプラインエラー: {type(exc).__name__}: {str(exc)[:300]}",
+                    )
+                except Exception:
+                    pass
+
+        asyncio.create_task(_run_safe())
 
     async def _get_requirement(thread: discord.Thread) -> str:
         requirement = thread.name or ""
@@ -88,7 +102,7 @@ def build_bot(
                         requirement = await _get_requirement(thread)
                         await _start_pipeline(thread, requirement)
             except Exception as exc:  # noqa: BLE001
-                print(f"[bot] poll error: {exc}")
+                print(f"[bot] poll error: {type(exc).__name__}: {exc}")
             await asyncio.sleep(15)
 
     @bot.event

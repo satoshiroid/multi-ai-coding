@@ -71,11 +71,16 @@ class DiscordChannel(BaseChannel):
         """Render artifacts + approve/revise/reject controls for the owner."""
         thread = await self._fetch_thread(thread_id)
 
-        embed = discord.Embed(title=request.title, description=request.body)
+        # Discord embed: description ≤ 4096 chars, total size ≤ 6000 chars.
+        body = request.body
+        if len(body) > 3800:
+            body = body[:3800] + "\n…(省略)"
+        embed = discord.Embed(title=request.title[:256], description=body)
         if request.total_cost is not None:
-            embed.add_field(name="Total cost", value=f"{request.total_cost}", inline=False)
+            embed.add_field(name="Total cost", value=str(request.total_cost)[:1024], inline=False)
         if request.bom:
-            embed.add_field(name="BOM", value=self._format_bom(request), inline=False)
+            bom_text = self._format_bom(request)[:1000]
+            embed.add_field(name="BOM", value=bom_text, inline=False)
 
         files = self._collect_files(request.image_paths)
         view = _ApprovalView(request.request_id, self._owner_user_id, self._hitl)
@@ -86,7 +91,9 @@ class DiscordChannel(BaseChannel):
     ) -> None:
         """Present an escalation choice as one button per option string."""
         thread = await self._fetch_thread(thread_id)
-        embed = discord.Embed(title=title, description=body)
+        if len(body) > 3800:
+            body = body[:3800] + "\n…(省略)"
+        embed = discord.Embed(title=title[:256], description=body)
         view = _EscalationView(options)
         await thread.send(embed=embed, view=view)
 
