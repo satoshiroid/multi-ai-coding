@@ -65,16 +65,28 @@ class BaseWorker(BaseAgent):
 
         sections.append(
             "# Output\n"
-            "Return your result as JSON. Set confidence_score to your honest "
-            "0-100 confidence that this output fully and correctly satisfies the "
-            "task; a low score will trigger senior review."
+            "Return your result as JSON. Be CONCISE — keep artifacts compact "
+            "(key specs only, no exhaustive lists). Set confidence_score to your "
+            "honest 0-100 confidence; a low score triggers senior review."
         )
         return "\n\n".join(sections)
 
     async def execute(self, task: TaskSpec) -> AgentResult:
         """Run the task and normalise the LLM output into an AgentResult."""
         prompt = self._build_prompt(task)
-        data = await self.run_structured(prompt, schema_hint=_RESULT_SCHEMA_HINT)
+        try:
+            data = await self.run_structured(prompt, schema_hint=_RESULT_SCHEMA_HINT)
+        except (ValueError, json.JSONDecodeError) as exc:
+            # Truncated / malformed JSON: return a zero-confidence result so the
+            # pipeline continues and L2 escalation handles the retry.
+            return AgentResult(
+                task_id=task.task_id,
+                domain=self.domain,
+                summary=f"(JSON parse error — output was truncated: {exc})",
+                confidence_score=0,
+                artifacts={},
+                metadata={"parse_error": str(exc)},
+            )
 
         # Defensive extraction: never trust the model to return every field.
         summary = data.get("summary") or "(no summary produced)"
