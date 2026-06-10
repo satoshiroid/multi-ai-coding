@@ -13,9 +13,8 @@ from src.mcp.client import McpServerSpec, McpToolResult
 
 # Per-tool canned responses, keyed by logical tool name.
 _DEFAULT_TOOL_RESULTS: dict[str, Any] = {
-    # Blender
-    "render": {"image_path": "render.png"},
-    "create_primitive": {"object": "Cube"},
+    # Blender (ahujasid/blender-mcp: execute_blender_code API)
+    "execute_blender_code": {"result": "ok"},
     # FreeCAD
     "create_sketch": {"sketch": "Sketch001"},
     "pad_sketch": {"solid": "Pad001"},

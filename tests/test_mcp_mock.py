@@ -35,9 +35,20 @@ async def test_blender_client_render():
     blender = BlenderClient(client)
     result = await blender.render("out.png")
     assert result.ok
-    assert ("render", {"output_path": "out.png"}) in client.calls or any(
-        c[0] == "render" for c in client.calls
-    )
+    # BlenderMCP addon uses execute_blender_code; render path must appear in code.
+    assert len(client.calls) == 1
+    tool, args = client.calls[0]
+    assert tool == "execute_blender_code"
+    assert "out.png" in args.get("code", "")
+
+
+@pytest.mark.asyncio
+async def test_blender_client_run_python():
+    client = MockMcpClient()
+    blender = BlenderClient(client)
+    result = await blender.run_python("import bpy; print('hello')")
+    assert result.ok
+    assert client.calls == [("execute_blender_code", {"code": "import bpy; print('hello')"})]
 
 
 @pytest.mark.asyncio

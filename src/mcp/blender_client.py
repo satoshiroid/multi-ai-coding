@@ -25,17 +25,16 @@ class BlenderClient:
     async def __aexit__(self, *exc: object) -> None:
         await self._client.close()
 
-    async def create_primitive(self, shape: str, **params: Any) -> McpToolResult:
-        """Add a primitive mesh (``shape`` e.g. ``"cube"``) with extra params."""
-        arguments: dict[str, Any] = {"shape": shape, **params}
-        return await self._client.call_tool("create_primitive", arguments)
+    async def run_python(self, script: str) -> McpToolResult:
+        """Execute arbitrary Blender Python code via the BlenderMCP addon."""
+        return await self._client.call_tool("execute_blender_code", {"code": script})
 
     async def render(self, output_path: str = "render.png") -> McpToolResult:
-        """Render the current scene to ``output_path``."""
-        arguments: dict[str, Any] = {"output_path": output_path}
-        return await self._client.call_tool("render", arguments)
-
-    async def run_python(self, script: str) -> McpToolResult:
-        """Execute an arbitrary Blender Python API ``script`` (passthrough)."""
-        arguments: dict[str, Any] = {"script": script}
-        return await self._client.call_tool("run_python", arguments)
+        """Render the current Blender scene to ``output_path`` (absolute path)."""
+        render_code = (
+            "import bpy\n"
+            f"bpy.context.scene.render.filepath = {repr(output_path)}\n"
+            "bpy.context.scene.render.image_settings.file_format = 'PNG'\n"
+            "bpy.ops.render.render(write_still=True)"
+        )
+        return await self._client.call_tool("execute_blender_code", {"code": render_code})

@@ -58,27 +58,39 @@ class McpClient:
         await self.close()
 
     async def connect(self) -> None:
-        """Open a stdio session to the configured MCP server."""
-        if self.spec.transport != "stdio":
-            raise NotImplementedError(
-                f"Only stdio transport is implemented (got {self.spec.transport!r})."
-            )
-        if not self.spec.command:
-            raise ValueError(f"MCP server {self.spec.name!r} has no launch command.")
-
+        """Open a session to the configured MCP server (stdio or SSE)."""
         try:
             from contextlib import AsyncExitStack
 
-            from mcp import ClientSession, StdioServerParameters
-            from mcp.client.stdio import stdio_client
+            from mcp import ClientSession
         except ImportError as exc:  # pragma: no cover - import guard
             raise RuntimeError(
                 "mcp package not installed. Run `pip install mcp`."
             ) from exc
 
         self._stack = AsyncExitStack()
-        params = StdioServerParameters(command=self.spec.command, args=self.spec.args)
-        read, write = await self._stack.enter_async_context(stdio_client(params))
+
+        if self.spec.transport == "stdio":
+            if not self.spec.command:
+                raise ValueError(f"MCP server {self.spec.name!r} has no launch command.")
+            from mcp import StdioServerParameters
+            from mcp.client.stdio import stdio_client
+
+            params = StdioServerParameters(command=self.spec.command, args=self.spec.args)
+            read, write = await self._stack.enter_async_context(stdio_client(params))
+
+        elif self.spec.transport == "sse":
+            if not self.spec.url:
+                raise ValueError(f"MCP server {self.spec.name!r} requires a URL for SSE transport.")
+            from mcp.client.sse import sse_client
+
+            read, write = await self._stack.enter_async_context(sse_client(self.spec.url))
+
+        else:
+            raise NotImplementedError(
+                f"Unsupported MCP transport {self.spec.transport!r}. Use 'stdio' or 'sse'."
+            )
+
         self._session = await self._stack.enter_async_context(ClientSession(read, write))
         await self._session.initialize()
 
