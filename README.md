@@ -10,9 +10,9 @@
         │ 要件入力 / HITL承認
         ▼
 ┌─────────────────────────────────────────────────────────┐
-│          PM / Orchestrator (L1 — Claude Opus)           │
+│       PM / Orchestrator (L1 — Gemini 2.0 Flash)         │
 │  ┌─────────────────────────────────────────────────┐    │
-│  │        Senior Design Manager (L2 — Claude Sonnet) │  │
+│  │   Senior Design Manager (L2 — Gemini 2.0 Flash)  │  │
 │  └─────────────────────────────────────────────────┘    │
 │                                                         │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐   │
@@ -25,12 +25,16 @@
 
 **ハブ&スポーク型**: PM が中央ハブ。ワーカー間の直接通信は禁止（制約違反の増幅防止）。
 
-## 9ステージパイプライン
+## パイプライン
+
+PM が要件を分析して **ハードウェア製品** か **ソフトウェアアプリ** かを自動判別し、対応パイプラインを選択します。
+
+### ハードウェア製品パイプライン（9ステージ）
 
 | # | ステージ | 担当 | 内容 |
 |---|---------|------|------|
 | 1 | 要件定義入力 | オーナー | 自然言語で製品アイデアを入力 |
-| 2 | システムアーキテクチャ策定 | PM (L1) | ドメイン別サブタスクに分解 |
+| 2 | システムアーキテクチャ策定 | PM (L1) | project_type 判定 + ドメイン分解 |
 | 3 | コンセプトデザイン | DesignWorker (L3/Blender) | 3Dモデル・レンダリング生成 |
 | 4 | **HITL承認ゲート1** | オーナー | デザイン承認 / 修正ループ |
 | 5 | 並列設計 | MechaWorker + CircuitWorker | FreeCAD筐体 + KiCAD基板 |
@@ -39,20 +43,35 @@
 | 8 | 製造データ生成 | CircuitWorker + SoftwareWorker | Gerber出力 + ファームウェア |
 | 9 | **最終サインオフ** | オーナー | 製造データアーカイブ |
 
+### アプリ開発パイプライン（8ステージ）
+
+PM が `project_type: "app"` と判断した場合（Web / モバイル / デスクトップ / SaaS / CLI）に選択されます。
+
+| # | ステージ | 担当 | 内容 |
+|---|---------|------|------|
+| 1 | 要件定義入力 | オーナー | 自然言語でアプリアイデアを入力 |
+| 2 | アーキテクチャ策定 | PM (L1) | project_type = "app" を返す |
+| 3 | UI/UXデザイン | DesignWorker (L3) | 画面設計・遷移フロー |
+| 4 | **HITL承認ゲート1** | オーナー | UIデザイン承認 / 修正ループ |
+| 5 | アーキテクチャ設計 | SoftwareWorker (L3) | 技術スタック・モジュール・API設計 |
+| 6 | **HITL承認ゲート2** | オーナー | アーキテクチャ承認 |
+| 7 | MVP実装 | SoftwareWorker (L3) | コアコード生成（200行以内の骨格） |
+| 8 | **最終サインオフ** | オーナー | コード・セットアップ手順確認 |
+
 L2 シニアは各 L3 の `confidence_score < 70` で自動介入。L2 解決不能時は Discord でオーナーへエスカレーション。
 
 ## LLMコスト戦略
 
 | 層 | 役割 | プロバイダ / モデル | 代替 |
 |----|------|-----------------|------|
-| L1 | PM / オーケストレーター | anthropic / claude-opus-4-8 | gemini-2.x-pro |
-| L2 | シニア設計マネージャー | anthropic / claude-sonnet-4-6 | gemini-2.x-pro |
-| L3 | ワーカー（実装/デバッグ/ツール操作） | gemini / gemini-flash（無料枠） | ollama / qwen2.5-coder |
+| L1 | PM / オーケストレーター | gemini / gemini-2.0-flash | anthropic / claude-opus-4-8 |
+| L2 | シニア設計マネージャー | gemini / gemini-2.0-flash | anthropic / claude-sonnet-4-6 |
+| L3 | ワーカー（実装/デバッグ/ツール操作） | gemini / gemini-2.0-flash（無料枠） | ollama / qwen2.5-coder |
 
-完全無料運用にしたい場合は `config/settings.yaml` で全層を `ollama` に変更するだけ。
+デフォルト設定は全層 Gemini 無料枠。完全無料運用にしたい場合は `config/settings.yaml` で全層を `ollama` に変更、高精度が必要な場合は L1/L2 を `anthropic` に切り替えてください。
 
 > **注意**: Claude Pro / Max 月額プランは API アクセスを含みません。
-> API 利用には別途 [Anthropic API](https://console.anthropic.com) の従量課金登録が必要です。
+> Anthropic API を使う場合は別途 [Anthropic API](https://console.anthropic.com) の従量課金登録が必要です。
 
 ## セットアップ
 
@@ -99,7 +118,7 @@ OWNER_USER_ID=456...                # オーナーの Discord ユーザー ID
 
 | ドメイン | 推奨MCPサーバー |
 |---------|--------------|
-| Blender | [blendermcp](https://github.com/ahujasid/blender-mcp) — Mac 動作確認済み |
+| Blender | [blender-mcp](https://github.com/ahujasid/blender-mcp) — アドオンをインストール後、Blender 内の「Blender MCP」パネルでポート **9876** を指定してサーバー起動。`config/settings.yaml` の `mcp.blender.url` が `http://localhost:9876/sse` に設定済み |
 | FreeCAD | [neka-nat/freecad-mcp](https://github.com/neka-nat/freecad-mcp) |
 | KiCAD | [lamaalrajih/kicad-mcp](https://github.com/lamaalrajih/kicad-mcp) |
 
@@ -142,7 +161,7 @@ uvicorn src.interfaces.api:app --host 0.0.0.0 --port 8000
 ## テスト
 
 ```bash
-# 全テスト実行（36件）
+# 全テスト実行（54件）
 pytest tests/ -v
 
 # モック E2E のみ
@@ -202,7 +221,7 @@ multi-ai-coding/
 ├── examples/
 │   ├── run_pipeline.py      # CLI エントリポイント
 │   └── run_server.py        # 本番サーバー起動
-├── tests/                   # 36 テスト（全モック）
+├── tests/                   # 38 テスト（全モック）
 ├── requirements.txt
 ├── pytest.ini
 └── .env.example
