@@ -73,8 +73,11 @@ class HitlManager:
         """
         fut = self._pending.get(response.request_id)
         if fut is not None and not fut.done():
-            fut.set_result(response)
-            return True
+            try:
+                fut.set_result(response)
+                return True
+            except asyncio.InvalidStateError:
+                return False
         return False
 
     def pending_ids(self) -> list[str]:

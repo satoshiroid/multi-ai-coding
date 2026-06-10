@@ -31,7 +31,15 @@ from src.orchestrator.consistency import ConsistencyChecker
 from src.orchestrator.context_store import ContextStore
 from src.orchestrator.state_store import StateStore
 from src.orchestrator.task_router import tasks_for_stage
-from workflows.manufacturing_pipeline import PIPELINE, Stage, StageKind
+from workflows.manufacturing_pipeline import (
+    PIPELINE,
+    Stage,
+    StageKind,
+    get_stage,
+    normalize_project_type,
+    select_pipeline,
+    stage_count,
+)
 
 
 class PMOrchestrator:
@@ -59,6 +67,8 @@ class PMOrchestrator:
         self.state_store = state_store
         self.confidence_threshold = confidence_threshold
         self.notify_progress = notify_progress
+        # Active pipeline — starts as hardware default, updated after PM stage.
+        self._active_pipeline: tuple[Stage, ...] = PIPELINE
 
     # ------------------------------------------------------------------ #
     # Public entry point
@@ -75,14 +85,25 @@ class PMOrchestrator:
         )
         self._persist(state)
 
+        self._active_pipeline = PIPELINE  # reset; switched after PM classifies project type
         plan: dict[str, Any] = {}
         index = 1
-        while index <= len(PIPELINE):
-            stage = next(s for s in PIPELINE if s.index == index)
+        while index <= stage_count(self._active_pipeline):
+            stage = get_stage(index, self._active_pipeline)
             state.current_stage = stage.index
             self._persist(state)
 
             next_index, plan = await self._run_stage(stage, state, plan)
+
+            # After PM planning: pick the right pipeline for this project type.
+            if stage.kind == StageKind.PM:
+                project_type = plan.get("project_type", "hardware")
+                self._active_pipeline = select_pipeline(project_type)
+                state.project_type = normalize_project_type(project_type)
+                self._persist(state)
+                await self._progress(
+                    state, f"🗂️ プロジェクト種別: {state.project_type}"
+                )
 
             if next_index is None:  # rejected / aborted
                 state.status = StageStatus.REJECTED
@@ -92,7 +113,8 @@ class PMOrchestrator:
 
         state.status = StageStatus.DONE
         self._persist(state)
-        await self._progress(state, "✅ プロジェクト完了。製造データをアーカイブしました。")
+        archive_label = "アプリ成果物" if state.project_type == "app" else "製造データ"
+        await self._progress(state, f"✅ プロジェクト完了。{archive_label}をアーカイブしました。")
         return state
 
     # ------------------------------------------------------------------ #
@@ -133,7 +155,7 @@ class PMOrchestrator:
     ) -> None:
         """Run all of a stage's domain workers (concurrently if PARALLEL)."""
         tasks = tasks_for_stage(
-            stage.domains, plan, self.context.snapshot(), feedback=feedback
+            stage, plan, self.context.snapshot(), feedback=feedback
         )
 
         async def _run_one(task: TaskSpec) -> AgentResult:
@@ -228,7 +250,7 @@ class PMOrchestrator:
         await self._progress(state, f"❌ 干渉検出: {issues} → 再設計へ差し戻し")
         # Loop back to the engineering stage with the issue as feedback.
         back = stage.on_reject_to or (stage.index - 1)
-        back_stage = next(s for s in PIPELINE if s.index == back)
+        back_stage = get_stage(back, self._active_pipeline)
         await self._run_workers(
             back_stage, state, plan={}, feedback=f"整合性エラーを修正してください: {issues}"
         )
@@ -267,7 +289,7 @@ class PMOrchestrator:
                 state, f"✏️ 修正要求: {response.feedback or '(詳細なし)'} → ステージ{target}へ"
             )
             # Re-run the loop-back stage with feedback, then return to the gate.
-            back_stage = next(s for s in PIPELINE if s.index == target)
+            back_stage = get_stage(target, self._active_pipeline)
             if back_stage.kind in (StageKind.WORKER, StageKind.PARALLEL):
                 await self._run_workers(
                     back_stage, state, plan={}, feedback=response.feedback

@@ -25,18 +25,25 @@ class PMAgent(BaseAgent):
         ``domain`` strings must match the :class:`~src.models.Domain` values.
         """
         schema_hint = (
-            '{"domains": [str], "summary": str, '
+            '{"project_type": "hardware" | "app", "domains": [str], "summary": str, '
             '"subtasks": [{"domain": str, "instruction": str}]}'
         )
         prompt = (
             "# Owner requirement\n"
             f"{requirement.strip()}\n\n"
             "# Your job\n"
-            "Decompose this into a master development plan. Decide which "
-            "engineering domains are involved (design, mecha, circuit, software) "
-            "and write one concrete, self-contained instruction per subtask. "
-            "Each subtask's 'domain' must be one of: design, mecha, circuit, "
-            "software. Provide a short overall summary of the plan."
+            "Decompose this into a master development plan.\n\n"
+            "First, classify the project:\n"
+            "- project_type = \"hardware\" — involves physical devices, electronics, "
+            "enclosures, PCBs, sensors, actuators, or embedded firmware.\n"
+            "- project_type = \"app\" — purely software: web/mobile/desktop/CLI/SaaS "
+            "application with no custom hardware.\n\n"
+            "Then decide which engineering domains are needed:\n"
+            "  Hardware: any of design, mecha, circuit, software\n"
+            "  App: design (UI/UX) and software (backend/frontend/mobile)\n\n"
+            "Write one concrete, self-contained instruction per subtask. "
+            "Each subtask's 'domain' must be one of: design, mecha, circuit, software.\n"
+            "Provide a short overall summary of the plan."
         )
         return await self.run_structured(prompt, schema_hint=schema_hint)
 

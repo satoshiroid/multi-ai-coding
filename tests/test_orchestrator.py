@@ -54,6 +54,57 @@ async def test_pipeline_persists_state(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_app_pipeline_selected_for_software_requirement():
+    """A purely-software requirement should route through APP_PIPELINE."""
+    from src.llm.factory import TieredLLM
+    from src.llm.mock_provider import MockProvider
+
+    def responder(messages):
+        blob = " ".join(m.content for m in messages).lower()
+        # PM prompt: return app project_type
+        if any(k in blob for k in ["project_type", "decompose", "plan", "プロジェクト", "requirement"]):
+            return {
+                "project_type": "app",
+                "summary": "ECサイトのモバイルアプリ開発",
+                "domains": ["design", "software"],
+                "subtasks": [],
+            }
+        # design/UI worker
+        if "design" in blob or "デザイン" in blob or "ui" in blob:
+            return {
+                "summary": "UIデザインを生成",
+                "confidence_score": 90,
+                "artifacts": {"design_spec": {"screens": ["home", "cart"]}},
+                "metadata": {"target_platform": "ios"},
+            }
+        # software worker (architecture + implementation)
+        return {
+            "summary": "アーキテクチャ設計完了",
+            "confidence_score": 88,
+            "artifacts": {},
+            "metadata": {"tech_stack": "React Native"},
+        }
+
+    settings, agents = _cfg()
+    orch = build_orchestrator(settings, agents, force_mock=True)
+    controlled = TieredLLM("x", MockProvider(responder=responder))
+    orch.pm.llm = controlled
+    orch.senior.llm = controlled
+    for w in orch.workers.values():
+        w.llm = controlled
+
+    state = await orch.run("ECサイトのモバイルアプリを作りたい", project_id="app-1")
+    assert state.status == StageStatus.DONE
+    assert state.project_type == "app"
+    # App pipeline has 8 stages (final HITL is stage 8).
+    assert state.current_stage == 8
+    # Hardware domains must not appear in an app-only pipeline.
+    assert "mecha" not in state.results
+    assert "circuit" not in state.results
+    assert "software" in state.results
+
+
+@pytest.mark.asyncio
 async def test_low_confidence_triggers_escalation():
     """A worker returning low confidence should route through the senior agent."""
     from src.llm.factory import TieredLLM

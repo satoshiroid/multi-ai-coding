@@ -58,12 +58,13 @@ _DEFAULT_RESPONSES: dict[str, dict[str, Any]] = {
         "metadata": {"rtos": "FreeRTOS"},
     },
     "pm": {
+        "project_type": "hardware",
         "summary": "要件を解析しマスター実行計画を策定",
+        "domains": ["design", "mecha", "circuit", "software"],
+        "subtasks": [],
         "confidence_score": 90,
         "artifacts": {},
-        "metadata": {
-            "domains": ["design", "mecha", "circuit", "software"],
-        },
+        "metadata": {},
     },
 }
 
