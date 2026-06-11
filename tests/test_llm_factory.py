@@ -110,6 +110,54 @@ async def test_mock_infers_pm_from_schema_marker():
     assert data.get("project_type") == "hardware"  # pm canned response
 
 
+def _pm_prompt(requirement: str) -> str:
+    """PM-planning-shaped prompt: the boilerplate mentions both project types,
+    so detection must come from the requirement section alone."""
+    return (
+        "# Owner requirement\n"
+        f"{requirement}\n\n"
+        "# Your job\n"
+        "Decompose this into a master development plan.\n"
+        'project_type = "hardware" — physical devices, PCBs, firmware.\n'
+        'project_type = "app" — purely software: web/mobile/desktop/CLI/SaaS.\n'
+        "App: design (UI/UX) and software (backend/frontend/mobile)\n"
+    )
+
+
+@pytest.mark.asyncio
+async def test_mock_pm_detects_app_requirement():
+    """Regression: 'ToDoリスト管理アプリ' ran the hardware pipeline because the
+    mock PM always returned project_type=hardware."""
+    provider = MockProvider()
+    data = await provider.complete_structured(
+        [LlmMessage(role="user", content=_pm_prompt("ToDoリスト管理アプリを作りたい"))],
+        schema_hint='{"project_type": "hardware" | "app", "domains": [str]}',
+    )
+    assert data["project_type"] == "app"
+    assert data["domains"] == ["design", "software"]
+
+
+@pytest.mark.asyncio
+async def test_mock_pm_keeps_hardware_for_physical_product():
+    provider = MockProvider()
+    data = await provider.complete_structured(
+        [LlmMessage(role="user", content=_pm_prompt("コンパクトなワイヤレスキーボードを作りたい"))],
+        schema_hint='{"project_type": "hardware" | "app", "domains": [str]}',
+    )
+    assert data["project_type"] == "hardware"
+
+
+@pytest.mark.asyncio
+async def test_mock_pm_hardware_wins_mixed_requirement():
+    """A device with a companion app is still a hardware project."""
+    provider = MockProvider()
+    data = await provider.complete_structured(
+        [LlmMessage(role="user", content=_pm_prompt("スマホアプリ連携の温度センサーデバイスを作りたい"))],
+        schema_hint='{"project_type": "hardware" | "app", "domains": [str]}',
+    )
+    assert data["project_type"] == "hardware"
+
+
 @pytest.mark.asyncio
 async def test_mock_infers_senior_from_schema_marker():
     from src.models import LlmMessage

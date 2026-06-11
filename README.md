@@ -118,7 +118,7 @@ OWNER_USER_ID=456...                # オーナーの Discord ユーザー ID
 
 | ドメイン | 推奨MCPサーバー |
 |---------|--------------|
-| Blender | [blender-mcp](https://github.com/ahujasid/blender-mcp) — アドオンをインストール後、Blender 内の「Blender MCP」パネルでポート **9876** を指定してサーバー起動。`config/settings.yaml` の `mcp.blender.url` が `http://localhost:9876/sse` に設定済み |
+| Blender | [blender-mcp](https://github.com/ahujasid/blender-mcp) — アドオンをインストール後、Blender 内の「Blender MCP」パネルでポート **9876** を指定してサーバー起動。このポートは MCP/SSE ではなく**生の JSON-over-TCP ソケット**のため、`config/settings.yaml` は `transport: tcp` / `host: localhost` / `port: 9876` を設定済み（中継プロセス不要で直接接続） |
 | FreeCAD | [neka-nat/freecad-mcp](https://github.com/neka-nat/freecad-mcp) |
 | KiCAD | [lamaalrajih/kicad-mcp](https://github.com/lamaalrajih/kicad-mcp) |
 
@@ -136,6 +136,38 @@ python examples/run_pipeline.py --mock "Wi-Fi環境モニターを作りたい"
 # CLIでHITL承認を手動入力
 python examples/run_pipeline.py "製品アイデア"
 ```
+
+### Blender ライブモデリングテスト（ローカルLLM × デザインレビュー）
+
+起動中の Blender を **ローカルLLM**（Ollama / qwen2.5-coder）が操作してモデリングし、
+レンダリング結果を**デザインLLM**（Gemini vision）が採点・修正指示する自律ループ:
+
+```
+要件 → [Ollama] bpyスクリプト生成 → [Blender:9876] 実行(エラー時は自己デバッグ)
+     → レンダリング(PNG) → [Gemini vision] スコア+修正指示 → 合格 or 再修正ループ
+```
+
+事前準備:
+
+```bash
+# 1. Ollama をインストール (https://ollama.com/download) してモデルを取得
+ollama pull qwen2.5-coder:7b     # メモリが少ないMacは 3b 推奨
+
+# 2. Blender で BlenderMCP アドオンのサーバーを起動（ポート9876）
+
+# 3. .env に GEMINI_API_KEY を設定（レビュー不要なら --no-review で省略可）
+```
+
+実行:
+
+```bash
+python examples/run_blender_live.py "丸みを帯びたワイヤレスキーボードのコンセプトモデル"
+
+# 軽量モデル・2往復・レビューなしの最小構成
+python examples/run_blender_live.py --worker-model qwen2.5-coder:3b --iterations 2 --no-review "..."
+```
+
+レンダリングは `outputs/blender_live/iter_NN.png` に保存されます。
 
 ### Discord Bot 常駐サーバー
 
@@ -161,7 +193,7 @@ uvicorn src.interfaces.api:app --host 0.0.0.0 --port 8000
 ## テスト
 
 ```bash
-# 全テスト実行（64件）
+# 全テスト実行（83件）
 pytest tests/ -v
 
 # モック E2E のみ
@@ -192,6 +224,7 @@ multi-ai-coding/
 │   ├── mcp/
 │   │   ├── client.py        # McpClient (stdio/官式SDK)
 │   │   ├── blender_client.py
+│   │   ├── blender_tcp.py   # BlenderMCPアドオン直結TCPクライアント
 │   │   ├── freecad_client.py
 │   │   ├── kicad_client.py
 │   │   └── mock_transport.py
@@ -220,8 +253,9 @@ multi-ai-coding/
 │   └── manufacturing_pipeline.py  # 9ステージ定義
 ├── examples/
 │   ├── run_pipeline.py      # CLI エントリポイント
+│   ├── run_blender_live.py  # Blenderライブモデリング（Ollama×Geminiレビュー）
 │   └── run_server.py        # 本番サーバー起動
-├── tests/                   # 64 テスト（全モック）
+├── tests/                   # 83 テスト（全モック）
 ├── requirements.txt
 ├── pytest.ini
 └── .env.example

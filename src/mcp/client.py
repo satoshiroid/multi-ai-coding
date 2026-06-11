@@ -33,6 +33,22 @@ class McpServerSpec:
     command: str | None = None
     args: list[str] = field(default_factory=list)
     url: str | None = None
+    host: str | None = None    # tcp transport (BlenderMCP addon socket)
+    port: int | None = None
+
+
+def client_for_spec(spec: McpServerSpec) -> Any:
+    """Instantiate the right client for a spec's transport.
+
+    ``tcp`` is the BlenderMCP addon's raw JSON socket (not MCP protocol), so it
+    gets the dedicated :class:`~src.mcp.blender_tcp.BlenderTcpClient`; everything
+    else goes through the official MCP SDK via :class:`McpClient`.
+    """
+    if spec.transport == "tcp":
+        from src.mcp.blender_tcp import BlenderTcpClient  # local import: avoid cycle
+
+        return BlenderTcpClient(host=spec.host or "localhost", port=spec.port or 9876)
+    return McpClient(spec)
 
 
 class McpClient:
@@ -88,7 +104,9 @@ class McpClient:
 
         else:
             raise NotImplementedError(
-                f"Unsupported MCP transport {self.spec.transport!r}. Use 'stdio' or 'sse'."
+                f"Unsupported MCP transport {self.spec.transport!r}. Use 'stdio' or "
+                "'sse' here; the BlenderMCP addon socket uses transport 'tcp' via "
+                "client_for_spec()."
             )
 
         self._session = await self._stack.enter_async_context(ClientSession(read, write))

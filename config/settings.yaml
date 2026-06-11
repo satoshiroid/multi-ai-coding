@@ -63,9 +63,13 @@ hitl:
 # leave `enabled: false` to use the built-in mock transport (CI / no-CAD env).
 mcp:
   blender:
+    # BlenderMCP addon (ahujasid/blender-mcp): the in-Blender "Running on port
+    # 9876" server is a raw JSON-over-TCP socket, NOT an MCP/SSE endpoint —
+    # transport `tcp` speaks that protocol directly (no uvx bridge needed).
     enabled: true
-    transport: sse
-    url: http://localhost:9876/sse
+    transport: tcp
+    host: localhost
+    port: 9876
   freecad:
     enabled: false
     transport: stdio

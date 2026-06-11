@@ -122,13 +122,64 @@ class MockProvider(LLMProvider):
             return "software"
         return "pm"
 
+    @staticmethod
+    def _pm_response(messages: list[LlmMessage]) -> dict[str, Any]:
+        """PM canned plan — classify hardware vs app from the *requirement* text.
+
+        The PM planning prompt's boilerplate ("# Your job" section, schema hint)
+        mentions both project types ("app", "web/mobile/SaaS"), so keyword
+        scanning must be restricted to the owner requirement section; scanning
+        the whole prompt would classify every project as an app.
+        """
+        blob = " ".join(m.content for m in messages)
+
+        # Isolate the requirement: between "# Owner requirement" and the next
+        # "# " header. Without the marker, scan the full text but with
+        # Japanese keywords only (the English boilerplate never contains them).
+        section = re.search(r"# Owner requirement\s*\n(.*?)(?:\n# |\Z)", blob, re.DOTALL)
+        if section:
+            requirement = section.group(1)
+            scan_english = True
+        else:
+            requirement = blob
+            scan_english = False
+
+        lowered = requirement.lower()
+        hardware_jp = ("基板", "回路", "筐体", "センサ", "デバイス", "ハードウェア",
+                       "ファームウェア", "マイコン", "電子工作")
+        app_jp = ("アプリ", "ウェブ", "サイト", "モバイル", "ダッシュボード", "管理画面")
+
+        is_hardware = any(kw in requirement for kw in hardware_jp)
+        is_app = any(kw in requirement for kw in app_jp)
+        if scan_english and not is_app:
+            is_app = bool(
+                re.search(r"\b(app(?:s|lication)?|web(?:site)?|mobile|saas|todo)\b", lowered)
+            )
+
+        # Physical-product keywords win mixed cases ("センサーデバイス+連携アプリ"
+        # is a hardware project with companion software, not an app project).
+        if is_app and not is_hardware:
+            return {
+                "project_type": "app",
+                "summary": "要件を解析しアプリ開発計画を策定",
+                "domains": ["design", "software"],
+                "subtasks": [],
+                "confidence_score": 90,
+                "artifacts": {},
+                "metadata": {},
+            }
+        return dict(_DEFAULT_RESPONSES["pm"])
+
     async def complete(self, messages: list[LlmMessage], **opts: Any) -> LLMResponse:
         self.calls.append(messages)
         if self._responder is not None:
             data = self._responder(messages)
         else:
             domain = self._infer_domain(messages)
-            data = dict(_DEFAULT_RESPONSES.get(domain, _DEFAULT_RESPONSES["pm"]))
+            if domain == "pm":
+                data = self._pm_response(messages)
+            else:
+                data = dict(_DEFAULT_RESPONSES.get(domain, _DEFAULT_RESPONSES["pm"]))
         return LLMResponse(
             text=json.dumps(data, ensure_ascii=False),
             provider=self.name,

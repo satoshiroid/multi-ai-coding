@@ -174,14 +174,14 @@ class DesignWorker(BaseWorker):
     async def _render_blender(self, task_id: str, script: str, result: AgentResult) -> None:
         """Execute script in Blender and attach the render path to result."""
         from src.mcp.blender_client import BlenderClient
-        from src.mcp.client import McpClient
+        from src.mcp.client import client_for_spec
 
         render_dir = os.path.join(os.getcwd(), "data", "renders")
         os.makedirs(render_dir, exist_ok=True)
         render_path = os.path.join(render_dir, f"{task_id}.png")
 
         try:
-            async with BlenderClient(McpClient(self._blender_spec)) as bl:
+            async with BlenderClient(client_for_spec(self._blender_spec)) as bl:
                 run_result = await bl.run_python(script)
                 if not run_result.ok:
                     result.metadata["blender_script_error"] = run_result.error

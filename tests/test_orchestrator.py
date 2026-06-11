@@ -105,6 +105,21 @@ async def test_app_pipeline_selected_for_software_requirement():
 
 
 @pytest.mark.asyncio
+async def test_default_mock_routes_app_requirement_to_app_pipeline():
+    """Regression: with the DEFAULT mock stack (no responder injection) an app
+    requirement must select APP_PIPELINE — the live `--mock` run previously
+    classified every project as hardware."""
+    settings, agents = _cfg()
+    orch = build_orchestrator(settings, agents, force_mock=True)
+    state = await orch.run("ToDoリスト管理アプリを作りたい", project_id="app-mock-1")
+    assert state.status == StageStatus.DONE
+    assert state.project_type == "app"
+    assert state.current_stage == 8
+    assert "mecha" not in state.results
+    assert "circuit" not in state.results
+
+
+@pytest.mark.asyncio
 async def test_low_confidence_triggers_escalation():
     """A worker returning low confidence should route through the senior agent."""
     from src.llm.factory import TieredLLM

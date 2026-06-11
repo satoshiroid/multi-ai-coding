@@ -67,6 +67,8 @@ def build_orchestrator(
         command=blender_cfg.get("command") or None,
         args=list(blender_cfg.get("args", [])),
         url=blender_cfg.get("url") or None,
+        host=blender_cfg.get("host") or None,
+        port=int(blender_cfg["port"]) if blender_cfg.get("port") else None,
     ) if blender_cfg else None
 
     workers: dict[Domain, BaseWorker] = {}
