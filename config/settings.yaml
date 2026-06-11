@@ -1,9 +1,13 @@
 # =========================================================================
 # Hierarchical Multi-Agent Orchestration (HMAO) — runtime settings
 #
-# Each tier (L1/L2/L3) is mapped to an LLM provider + model. To run fully
-# free/offline, switch every `provider` to `ollama`. To run highest quality,
-# switch L3 to `anthropic`.
+# Each tier (L1/L2/L3) is mapped to an LLM provider + model.
+# L1/L2 (planning/arbitration, JSON tasks) run on the Gemini free tier;
+# L3 (tool operation: bpy/FreeCAD/KiCAD script generation) runs on Claude —
+# code accuracy is decisive there and retries cost more than tokens.
+# Local LLMs (ollama) proved impractical for tool ops on 8GB-class machines
+# (qwen2.5-coder:3b lacks bpy knowledge; 7b does not fit) — see
+# docs/architecture-review.md.
 # =========================================================================
 
 # Per-tier LLM assignment (hybrid cost strategy by default).
@@ -21,8 +25,8 @@ tiers:
       provider: gemini
       model: gemini-2.0-flash
   L3:                              # Workers (implement / debug / tool ops)
-    provider: gemini
-    model: gemini-2.0-flash
+    provider: anthropic
+    model: claude-opus-4-8
     fallback:
       provider: gemini
       model: gemini-2.0-flash

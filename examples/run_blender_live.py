@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Live Blender modeling loop — cloud or local code LLM builds, design LLM reviews.
+"""Live Blender modeling loop — cloud code LLM builds, design LLM reviews.
 
 Architecture (one iteration):
 
     1. Builder LLM writes Blender Python for the brief.
-       --builder gemini  : Gemini Flash (cloud, recommended — knows bpy API well, less heat)
-       --builder ollama  : local Ollama model (offline, more compute)
+       --builder claude  : Claude (default — strongest bpy knowledge, fewest retries)
+       --builder gemini  : Gemini Flash (free tier)
+       --builder ollama  : local Ollama model (experimental; needs >8GB machines)
     2. The script runs inside the live Blender via the BlenderMCP addon's TCP
        socket (port 9876). Python errors are fed back for self-debugging.
     3. The scene is rendered to PNG.
@@ -15,19 +16,20 @@ Architecture (one iteration):
 
 Prerequisites:
     * Blender running with the BlenderMCP addon connected (port 9876).
+    * For --builder claude: ANTHROPIC_API_KEY in .env (pay-as-you-go credit)
     * For --builder gemini: GEMINI_API_KEY in .env
     * For --builder ollama: Ollama running with model pulled
 
 Usage::
 
-    # Recommended: cloud builder (no Ollama needed, less heat)
-    python examples/run_blender_live.py --builder gemini "丸みを帯びたワイヤレスキーボードのコンセプトモデル"
+    # Default: Claude builder + Gemini vision review
+    python examples/run_blender_live.py "丸みを帯びたワイヤレスキーボードのコンセプトモデル"
 
-    # Local builder (offline, more CPU)
-    python examples/run_blender_live.py --builder ollama --worker-model qwen2.5-coder:3b "..."
+    # Free-tier builder
+    python examples/run_blender_live.py --builder gemini "..."
 
-    # Skip design review
-    python examples/run_blender_live.py --builder gemini --no-review "..."
+    # Skip design review (no GEMINI_API_KEY needed)
+    python examples/run_blender_live.py --no-review "..."
 """
 
 from __future__ import annotations
@@ -45,11 +47,18 @@ import httpx
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.config import load_env
+from src.llm.anthropic_provider import AnthropicProvider
 from src.llm.gemini_vision import GeminiVisionReviewer
 from src.llm.ollama_provider import OllamaProvider
 from src.llm.provider import ProviderConfig
 from src.mcp.blender_tcp import BlenderTcpClient
 from src.models import LlmMessage
+
+_BUILDER_DEFAULT_MODELS = {
+    "claude": "claude-opus-4-8",
+    "gemini": "gemini-2.0-flash",
+    "ollama": "qwen2.5-coder:7b",
+}
 
 # ── Worker prompts ──────────────────────────────────────────────────────── #
 
@@ -147,6 +156,33 @@ bpy.ops.render.render(write_still=True)
 
 class CodeBuilder(Protocol):
     async def generate(self, system: str, user: str) -> str: ...
+
+
+class ClaudeCodeBuilder:
+    """Cloud script builder — Anthropic Messages API via the official SDK.
+
+    Wraps the project's AnthropicProvider (same pattern as OllamaCodeBuilder);
+    the SDK auto-retries 429/529 with exponential backoff.
+    """
+
+    def __init__(self, api_key: str, model: str = "claude-opus-4-8"):
+        self._provider = AnthropicProvider(
+            ProviderConfig(
+                provider="anthropic",
+                model=model,
+                api_key=api_key,
+                max_tokens=4096,
+                temperature=0.2,
+            )
+        )
+
+    async def generate(self, system: str, user: str) -> str:
+        messages = [
+            LlmMessage(role="system", content=system),
+            LlmMessage(role="user", content=user),
+        ]
+        response = await self._provider.complete(messages)
+        return response.text
 
 
 class GeminiCodeBuilder:
@@ -335,14 +371,8 @@ async def _execute_with_debug(
     builder: CodeBuilder,
     code: str,
     max_fixes: int = 2,
-    local_fixer: CodeBuilder | None = None,
 ) -> tuple[str, bool]:
-    """Run code in Blender; on Python errors self-debug via hybrid LLM strategy.
-
-    Hybrid mode (local_fixer provided):
-      attempts 0..max_fixes-2  → local fixer  (fast, offline, low heat)
-      final attempt             → cloud builder (API knowledge, higher accuracy)
-    """
+    """Run code in Blender; on Python errors the builder self-debugs."""
     for attempt in range(max_fixes + 1):
         result = await blender.call_tool("execute_blender_code", {"code": code})
         if result.ok:
@@ -351,12 +381,8 @@ async def _execute_with_debug(
         if attempt == max_fixes:
             print(f" ⚠️ Blender実行エラー (最終試行): {error[:160]}")
             break
-        # Choose fixer: local for early attempts, cloud as last resort.
-        use_local = local_fixer is not None and attempt < max_fixes - 1
-        fixer = local_fixer if use_local else builder
-        label = "ローカル修正" if use_local else "クラウド修正"
-        print(f" ⚠️ Blender実行エラー [{label} {attempt + 1}/{max_fixes}]: {error[:120]}")
-        code = await _generate_code(fixer, _FIX_TEMPLATE.format(code=code, error=error))
+        print(f" ⚠️ Blender実行エラー (修正 {attempt + 1}/{max_fixes}): {error[:120]}")
+        code = await _generate_code(builder, _FIX_TEMPLATE.format(code=code, error=error))
     return code, False
 
 
@@ -373,57 +399,41 @@ async def _main(args: argparse.Namespace) -> int:
 
     # Build the code-generation backend.
     builder: CodeBuilder
-    local_fixer: CodeBuilder | None = None
-    ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+    builder_model = args.builder_model or _BUILDER_DEFAULT_MODELS[args.builder]
 
-    if args.builder == "gemini":
+    if args.builder == "claude":
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            raise SystemExit(
+                "❌ ANTHROPIC_API_KEY が未設定です。\n"
+                "   https://console.anthropic.com でAPIキーを発行（従量課金・クレジット購入要）し\n"
+                "   .env に ANTHROPIC_API_KEY=sk-ant-... を追記してください。\n"
+                "   無料枠で試す場合は --builder gemini を指定してください。"
+            )
+        builder = ClaudeCodeBuilder(api_key=api_key, model=builder_model)
+        print(f" 🟢 ビルダー: Claude ({builder_model}) — クラウドLLM（最高精度）")
+    elif args.builder == "gemini":
         api_key = os.environ.get("GEMINI_API_KEY", "")
         if not api_key:
             raise SystemExit("❌ GEMINI_API_KEY が未設定です。.env に設定してください。")
-        builder = GeminiCodeBuilder(api_key=api_key, model=args.builder_model)
-        print(f" 🟢 ビルダー: Gemini ({args.builder_model}) — クラウドLLM（高精度・省熱）")
-
-        # Hybrid: if Ollama is reachable, use it for fast first-pass error fixes.
-        # Cloud is reserved for the final (hardest) fix attempt.
-        if not args.no_local_fix:
-            try:
-                async with httpx.AsyncClient(timeout=5.0) as hc:
-                    resp = await hc.get(f"{ollama_url}/api/tags")
-                    names = [m.get("name", "") for m in resp.json().get("models", [])]
-                if args.worker_model in names:
-                    local_fixer = OllamaCodeBuilder(
-                        OllamaProvider(
-                            ProviderConfig(
-                                provider="ollama",
-                                model=args.worker_model,
-                                base_url=ollama_url,
-                                max_tokens=1024,
-                                temperature=0.1,
-                            )
-                        )
-                    )
-                    print(
-                        f" 🟡 ローカル修正: Ollama ({args.worker_model}) "
-                        f"— エラー修正の初回試行に使用（省熱）"
-                    )
-            except Exception:
-                pass  # Ollama unavailable — cloud handles all fixes
-        if local_fixer is None:
-            print(" ℹ️  エラー修正: Gemini のみ（ハイブリッドなし）")
+        builder = GeminiCodeBuilder(api_key=api_key, model=builder_model)
+        print(f" 🟢 ビルダー: Gemini ({builder_model}) — クラウドLLM（無料枠）")
     else:
-        await _check_ollama(ollama_url, args.worker_model)
+        # Experimental: needs a machine with enough memory for a capable model.
+        ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+        await _check_ollama(ollama_url, builder_model)
         builder = OllamaCodeBuilder(
             OllamaProvider(
                 ProviderConfig(
                     provider="ollama",
-                    model=args.worker_model,
+                    model=builder_model,
                     base_url=ollama_url,
                     max_tokens=2048,
                     temperature=0.2,
                 )
             )
         )
-        print(f" 🟢 ビルダー: Ollama ({args.worker_model}) — ローカルLLM")
+        print(f" 🟢 ビルダー: Ollama ({builder_model}) — ローカルLLM（実験用）")
 
     reviewer: GeminiVisionReviewer | None = None
     if not args.no_review:
@@ -457,13 +467,13 @@ async def _main(args: argparse.Namespace) -> int:
                     feedback=prev["feedback"],
                 )
 
-            builder_label = "クラウドLLM" if args.builder == "gemini" else "ローカルLLM"
+            builder_label = "ローカルLLM" if args.builder == "ollama" else "クラウドLLM"
             print(f" 🧠 {builder_label}がBlenderスクリプトを生成中...")
             code = await _generate_code(builder, prompt)
             print(f"    生成: {len(code.splitlines())}行")
 
             print(" 🛠️ Blenderで実行中...")
-            code, ok = await _execute_with_debug(blender, builder, code, local_fixer=local_fixer)
+            code, ok = await _execute_with_debug(blender, builder, code)
             if not ok:
                 print(" ❌ スクリプトを修正しきれませんでした。次のイテレーションへ。")
                 history.append({"score": 0, "feedback": "スクリプト実行エラー", "render": None})
@@ -524,24 +534,18 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=9876)
     parser.add_argument("--iterations", type=int, default=3)
     parser.add_argument(
-        "--builder", choices=["gemini", "ollama"], default="gemini",
-        help="LLM backend for bpy script generation (gemini=cloud/recommended, ollama=local)",
+        "--builder", choices=["claude", "gemini", "ollama"], default="claude",
+        help="LLM backend for bpy script generation "
+             "(claude=default/highest accuracy, gemini=free tier, ollama=local experiment)",
     )
     parser.add_argument(
-        "--builder-model", default="gemini-2.0-flash",
-        help="Model name for --builder gemini",
-    )
-    parser.add_argument(
-        "--worker-model", default="qwen2.5-coder:7b",
-        help="Ollama model (used only when --builder ollama)",
+        "--builder-model", default=None,
+        help="Model name override (defaults: claude=claude-opus-4-8, "
+             "gemini=gemini-2.0-flash, ollama=qwen2.5-coder:7b)",
     )
     parser.add_argument("--reviewer-model", default="gemini-2.0-flash")
     parser.add_argument("--score-threshold", type=int, default=75)
     parser.add_argument("--no-review", action="store_true")
-    parser.add_argument(
-        "--no-local-fix", action="store_true",
-        help="Disable hybrid mode: use cloud builder for all error fixes too",
-    )
     parser.add_argument("--outdir", default="outputs/blender_live")
     args = parser.parse_args()
     raise SystemExit(asyncio.run(_main(args)))

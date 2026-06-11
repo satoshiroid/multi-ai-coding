@@ -62,16 +62,27 @@ L2 シニアは各 L3 の `confidence_score < 70` で自動介入。L2 解決不
 
 ## LLMコスト戦略
 
-| 層 | 役割 | プロバイダ / モデル | 代替 |
+| 層 | 役割 | プロバイダ / モデル | フォールバック |
 |----|------|-----------------|------|
-| L1 | PM / オーケストレーター | gemini / gemini-2.0-flash | anthropic / claude-opus-4-8 |
-| L2 | シニア設計マネージャー | gemini / gemini-2.0-flash | anthropic / claude-sonnet-4-6 |
-| L3 | ワーカー（実装/デバッグ/ツール操作） | gemini / gemini-2.0-flash（無料枠） | ollama / qwen2.5-coder |
+| L1 | PM / オーケストレーター | gemini / gemini-2.0-flash（無料枠） | gemini-2.0-flash |
+| L2 | シニア設計マネージャー | gemini / gemini-2.0-flash（無料枠） | gemini-2.0-flash |
+| L3 | ワーカー（実装/デバッグ/ツール操作） | **anthropic / claude-opus-4-8** | gemini-2.0-flash |
 
-デフォルト設定は全層 Gemini 無料枠。完全無料運用にしたい場合は `config/settings.yaml` で全層を `ollama` に変更、高精度が必要な場合は L1/L2 を `anthropic` に切り替えてください。
+計画・調停系（L1/L2）は Gemini 無料枠、**ツール操作スクリプト生成（L3）は Claude** のハイブリッド構成。
+コード精度が成果物到達率を決めるため、L3 だけ有料モデルにする方がエラー再試行込みの実質コストは低い
+（bpyスクリプト1生成 ≈ $0.06、モデリング1セッション ≈ $0.3〜0.5、フルパイプライン ≈ $1〜3）。
+
+> **ローカルLLMについて**: qwen2.5-coder 等によるツール操作は 8GB クラスの Mac では非現実的と
+> 実測で確認済み（3b は bpy API を知らず、7b はメモリに載らない。発熱も深刻）。
+> 詳細な分析は [docs/architecture-review.md](docs/architecture-review.md) を参照。
+> 16GB 以上のマシンでは `--builder ollama` で再試行可能です。
 
 > **注意**: Claude Pro / Max 月額プランは API アクセスを含みません。
-> Anthropic API を使う場合は別途 [Anthropic API](https://console.anthropic.com) の従量課金登録が必要です。
+> Anthropic API を使う場合は別途 [Anthropic API](https://console.anthropic.com) の従量課金登録（クレジット購入）が必要です。
+
+> **セキュリティ**: API キーをターミナルに `echo`/`cat` で表示したりスクリーンショットに含めると
+> 漏洩します。漏洩した場合は即時再発行してください
+> （Anthropic: console.anthropic.com / Gemini: aistudio.google.com/apikey / Discord: Developer Portal → Reset Token）。
 
 ## セットアップ
 
@@ -137,23 +148,22 @@ python examples/run_pipeline.py --mock "Wi-Fi環境モニターを作りたい"
 python examples/run_pipeline.py "製品アイデア"
 ```
 
-### Blender ライブモデリングテスト（ローカルLLM × デザインレビュー）
+### Blender ライブモデリングテスト（Claude × デザインレビュー）
 
-起動中の Blender を **ローカルLLM**（Ollama / qwen2.5-coder）が操作してモデリングし、
+起動中の Blender を **Claude**（claude-opus-4-8）が操作してモデリングし、
 レンダリング結果を**デザインLLM**（Gemini vision）が採点・修正指示する自律ループ:
 
 ```
-要件 → [Ollama] bpyスクリプト生成 → [Blender:9876] 実行(エラー時は自己デバッグ)
+要件 → [Claude] bpyスクリプト生成 → [Blender:9876] 実行(エラー時は自己デバッグ)
      → レンダリング(PNG) → [Gemini vision] スコア+修正指示 → 合格 or 再修正ループ
 ```
 
 事前準備:
 
 ```bash
-# 1. Ollama をインストール (https://ollama.com/download) してモデルを取得
-ollama pull qwen2.5-coder:7b     # メモリが少ないMacは 3b 推奨
+# 1. Blender で BlenderMCP アドオンのサーバーを起動（ポート9876）
 
-# 2. Blender で BlenderMCP アドオンのサーバーを起動（ポート9876）
+# 2. .env に ANTHROPIC_API_KEY を設定（従量課金・クレジット購入要）
 
 # 3. .env に GEMINI_API_KEY を設定（レビュー不要なら --no-review で省略可）
 ```
@@ -161,10 +171,17 @@ ollama pull qwen2.5-coder:7b     # メモリが少ないMacは 3b 推奨
 実行:
 
 ```bash
+# デフォルト: Claudeビルダー + Geminiレビュー
 python examples/run_blender_live.py "丸みを帯びたワイヤレスキーボードのコンセプトモデル"
 
-# 軽量モデル・2往復・レビューなしの最小構成
-python examples/run_blender_live.py --worker-model qwen2.5-coder:3b --iterations 2 --no-review "..."
+# 低コスト構成（Haikuビルダー・レビューなし）
+python examples/run_blender_live.py --builder-model claude-haiku-4-5 --no-review "..."
+
+# 無料枠のみ（Geminiビルダー）
+python examples/run_blender_live.py --builder gemini "..."
+
+# ローカルLLM実験（16GB+マシン向け。8GBでは非推奨 — docs/architecture-review.md参照）
+python examples/run_blender_live.py --builder ollama --builder-model qwen2.5-coder:7b "..."
 ```
 
 レンダリングは `outputs/blender_live/iter_NN.png` に保存されます。
@@ -212,6 +229,8 @@ multi-ai-coding/
 ├── config/
 │   ├── settings.yaml        # 階層別モデル割当・MCPサーバー接続
 │   └── agents.yaml          # エージェント役割・システムプロンプト
+├── docs/
+│   └── architecture-review.md  # 企画再評価（ローカルLLM実測・検証ゲート設計）
 ├── src/
 │   ├── models.py            # Pydantic v2 コアモデル
 │   ├── llm/
