@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Live Blender modeling loop — local code LLM builds, design LLM reviews.
+"""Live Blender modeling loop — cloud or local code LLM builds, design LLM reviews.
 
 Architecture (one iteration):
 
-    1. Worker LLM (local Ollama, default qwen2.5-coder) writes Blender Python
-       for the brief.
+    1. Builder LLM writes Blender Python for the brief.
+       --builder gemini  : Gemini Flash (cloud, recommended — knows bpy API well, less heat)
+       --builder ollama  : local Ollama model (offline, more compute)
     2. The script runs inside the live Blender via the BlenderMCP addon's TCP
        socket (port 9876). Python errors are fed back for self-debugging.
     3. The scene is rendered to PNG.
@@ -14,15 +15,19 @@ Architecture (one iteration):
 
 Prerequisites:
     * Blender running with the BlenderMCP addon connected (port 9876).
-    * Ollama running with the worker model pulled
-      (`ollama pull qwen2.5-coder:7b`).
-    * GEMINI_API_KEY in .env (skip review entirely with --no-review).
+    * For --builder gemini: GEMINI_API_KEY in .env
+    * For --builder ollama: Ollama running with model pulled
 
 Usage::
 
-    python examples/run_blender_live.py "丸みを帯びたワイヤレスキーボードのコンセプトモデル"
-    python examples/run_blender_live.py --iterations 2 --worker-model qwen2.5-coder:3b "..."
-    python examples/run_blender_live.py --no-review "..."   # GEMINI_API_KEY不要
+    # Recommended: cloud builder (no Ollama needed, less heat)
+    python examples/run_blender_live.py --builder gemini "丸みを帯びたワイヤレスキーボードのコンセプトモデル"
+
+    # Local builder (offline, more CPU)
+    python examples/run_blender_live.py --builder ollama --worker-model qwen2.5-coder:3b "..."
+
+    # Skip design review
+    python examples/run_blender_live.py --builder gemini --no-review "..."
 """
 
 from __future__ import annotations
@@ -33,6 +38,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from typing import Protocol
 
 import httpx
 
@@ -45,14 +51,16 @@ from src.llm.provider import ProviderConfig
 from src.mcp.blender_tcp import BlenderTcpClient
 from src.models import LlmMessage
 
-# ── Worker (local LLM) prompts ──────────────────────────────────────────── #
+# ── Worker prompts ──────────────────────────────────────────────────────── #
 
 _WORKER_SYSTEM = """You are an expert Blender Python (bpy) developer.
 You write scripts that build 3D concept models in a LIVE Blender session.
 
 STRICT RULES:
 1. Output ONLY Python code. No markdown fences, no explanations, no comments in other languages.
-2. Use only these imports: bpy, math, mathutils, bmesh.
+2. The script must begin with these exact imports (always needed):
+   import bpy, math, mathutils
+   from mathutils import Vector, Matrix, Euler
 3. START by deleting all existing MESH objects (keep Camera and Light objects):
    for obj in [o for o in bpy.data.objects if o.type == 'MESH']:
        bpy.data.objects.remove(obj, do_unlink=True)
@@ -65,14 +73,13 @@ STRICT RULES:
 
 CRITICAL API RULES — violating these causes AttributeError:
 - obj.type tells you the object type: 'MESH', 'LIGHT', 'CAMERA', etc.
-- Mesh data (obj.data when obj.type=='MESH') has: vertices, edges, faces, polygons — NOT energy/color/shadow.
-- Light data (obj.data when obj.type=='LIGHT') has: energy, color, shadow_soft_size — NOT vertices/faces.
+- Mesh data (obj.data when obj.type=='MESH') has: vertices, edges, faces, polygons — NOT energy.
+- Light data (obj.data when obj.type=='LIGHT') has: energy, color — NOT vertices.
 - To set light brightness: light_obj.data.energy = 5.0  (NOT light_obj.energy)
-- To make an emission material, use a ShaderNodeEmission on a material, do NOT set mesh.energy.
-- bpy.data.objects[name] returns an Object; accessing .data gives the object's datablock (Mesh or Light etc).
-- NEVER write obj.energy unless you have confirmed obj.type == 'LIGHT'.
+- NEVER write obj.energy or obj.data.energy unless you confirmed obj.type == 'LIGHT'.
+- All Vector() calls must use 3 components: Vector((x, y, z)) — NOT Vector((x, y)).
 
-CORRECT material setup example:
+CORRECT material setup:
   mat = bpy.data.materials.new("Mat")
   mat.use_nodes = True
   bsdf = mat.node_tree.nodes["Principled BSDF"]
@@ -89,7 +96,8 @@ _FIX_TEMPLATE = """Your previous Blender script raised an error.
 # Error
 {error}
 
-Output the FULL corrected script (not a diff). Remember: code only, no fences."""
+Output the FULL corrected script (not a diff). Remember: code only, no fences.
+Start with: import bpy, math, mathutils"""
 
 _REVISE_TEMPLATE = """# Design brief
 {brief}
@@ -101,14 +109,16 @@ _REVISE_TEMPLATE = """# Design brief
 {feedback}
 
 Revise the model to address every point in the review.
-Output the FULL new script (not a diff). Remember: code only, no fences."""
+Output the FULL new script (not a diff). Remember: code only, no fences.
+Start with: import bpy, math, mathutils"""
 
 _INITIAL_TEMPLATE = """# Design brief
 {brief}
 
-Write a Blender Python script that builds this as a presentable 3D concept model."""
+Write a Blender Python script that builds this as a presentable 3D concept model.
+Start with: import bpy, math, mathutils"""
 
-# ── Render helper (runs inside Blender via execute_code) ────────────────── #
+# ── Render helper ───────────────────────────────────────────────────────── #
 
 _RENDER_SCRIPT = """import bpy
 from mathutils import Vector
@@ -133,9 +143,74 @@ scene.render.filepath = {path!r}
 bpy.ops.render.render(write_still=True)
 """
 
+# ── Code builder protocol ───────────────────────────────────────────────── #
+
+class CodeBuilder(Protocol):
+    async def generate(self, system: str, user: str) -> str: ...
+
+
+class GeminiCodeBuilder:
+    """Cloud script builder — Gemini REST API (httpx, no SDK required)."""
+
+    def __init__(self, api_key: str, model: str = "gemini-2.0-flash"):
+        self._api_key = api_key
+        self._model = model
+        self._url = (
+            f"https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{model}:generateContent"
+        )
+
+    async def generate(self, system: str, user: str) -> str:
+        payload = {
+            "contents": [{"role": "user", "parts": [{"text": system + "\n\n" + user}]}],
+            "generationConfig": {"maxOutputTokens": 2048, "temperature": 0.2},
+        }
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            for attempt in range(3):
+                try:
+                    resp = await client.post(
+                        self._url, params={"key": self._api_key}, json=payload
+                    )
+                    if resp.status_code == 429:
+                        await asyncio.sleep(2 ** attempt * 2)
+                        continue
+                    resp.raise_for_status()
+                    data = resp.json()
+                    return data["candidates"][0]["content"]["parts"][0]["text"]
+                except Exception:
+                    if attempt == 2:
+                        raise
+                    await asyncio.sleep(2 ** attempt)
+        raise RuntimeError("Gemini API unreachable after 3 retries")
+
+
+class OllamaCodeBuilder:
+    """Local script builder using Ollama."""
+
+    def __init__(self, provider: OllamaProvider):
+        self._provider = provider
+
+    async def generate(self, system: str, user: str) -> str:
+        messages = [
+            LlmMessage(role="system", content=system),
+            LlmMessage(role="user", content=user),
+        ]
+        response = await self._provider.complete(messages)
+        return response.text
+
+
+# ── Code post-processing ────────────────────────────────────────────────── #
+
+_REQUIRED_IMPORTS = (
+    "import bpy\n"
+    "import math\n"
+    "import mathutils\n"
+    "from mathutils import Vector, Matrix, Euler\n"
+    "try:\n    import bmesh\nexcept ImportError:\n    pass\n\n"
+)
+
 
 def _strip_code_fences(text: str) -> str:
-    """Remove ```python fences if the model added them despite instructions."""
     stripped = text.strip()
     match = re.search(r"```(?:python)?\s*\n(.*?)```", stripped, re.DOTALL)
     if match:
@@ -143,39 +218,32 @@ def _strip_code_fences(text: str) -> str:
     return stripped
 
 
-_REQUIRED_IMPORTS = "import bpy\nimport math\nimport mathutils\nfrom mathutils import Vector, Matrix, Euler\ntry:\n    import bmesh\nexcept ImportError:\n    pass\n\n"
-
-
 def _sanitize_bpy_code(code: str) -> str:
-    """Fix common small-model bpy API mistakes before sending to Blender."""
-    # Ensure required imports are present regardless of what the model emits.
-    # Strip any existing import lines first, then prepend a canonical block.
-    lines = [l for l in code.splitlines()
-             if not re.match(r'^\s*import\s+(bpy|math|mathutils|bmesh)', l)
-             and not re.match(r'^\s*from\s+(mathutils|bmesh)', l)]
+    """Fix common bpy API mistakes and guarantee required imports."""
+    # Strip existing import lines, then prepend canonical block.
+    lines = [
+        l for l in code.splitlines()
+        if not re.match(r"^\s*import\s+(bpy|math|mathutils|bmesh)\b", l)
+        and not re.match(r"^\s*from\s+(mathutils|bmesh)\b", l)
+    ]
     code = _REQUIRED_IMPORTS + "\n".join(lines)
 
-    # obj.energy = X  →  guarded (energy only exists on Light datablocks)
+    # Guard .energy assignments (only valid on Light datablocks).
     code = re.sub(
-        r'^(\s*)(\w+)\.energy(\s*=)',
+        r"^(\s*)(\w+)\.energy(\s*=)",
         r'\1if hasattr(\2, "energy"): \2.energy\3',
-        code,
-        flags=re.MULTILINE,
+        code, flags=re.MULTILINE,
     )
-    # obj.data.energy = X  →  guarded
     code = re.sub(
-        r'^(\s*)(\w+)\.data\.energy(\s*=)',
+        r"^(\s*)(\w+)\.data\.energy(\s*=)",
         r'\1if hasattr(\2.data, "energy"): \2.data.energy\3',
-        code,
-        flags=re.MULTILINE,
+        code, flags=re.MULTILINE,
     )
-    # Normalise mathutils.Vector calls: Vector((x, y)) → Vector((x, y, 0))
-    # Small models sometimes emit 2-component vectors in 3-D contexts.
+
+    # Upgrade 2-component Vector() to 3-component.
     def _fix_vector2d(m: re.Match) -> str:
         inner = m.group(1).strip()
-        # Count top-level commas (not inside nested parens/brackets)
-        depth = 0
-        commas = 0
+        depth = commas = 0
         for ch in inner:
             if ch in "([":
                 depth += 1
@@ -183,11 +251,25 @@ def _sanitize_bpy_code(code: str) -> str:
                 depth -= 1
             elif ch == "," and depth == 0:
                 commas += 1
-        if commas == 1:
-            return f"Vector(({inner}, 0.0))"
-        return m.group(0)
+        return f"Vector(({inner}, 0.0))" if commas == 1 else m.group(0)
 
     code = re.sub(r"Vector\(\(([^()]+)\)\)", _fix_vector2d, code)
+
+    # Fix common enum value mistakes small models emit.
+    _ENUM_FIXES = [
+        # space.perspective / region_3d.view_perspective
+        (r'"PERSPECTIVE"', '"PERSP"'),
+        (r"'PERSPECTIVE'", "'PERSP'"),
+        # object display types
+        (r'"SOLID_WIRE"', '"SOLID"'),
+        # shading types
+        (r'"MATERIAL_PREVIEW"', '"MATERIAL"'),
+        # curve fill modes
+        (r'\.fill_mode\s*=\s*"FULL"', '.fill_mode = "FRONT"'),
+    ]
+    for pattern, replacement in _ENUM_FIXES:
+        code = re.sub(pattern, replacement, code)
+
     return code
 
 
@@ -201,8 +283,8 @@ async def _check_blender(host: str, port: int) -> BlenderTcpClient:
     except Exception as exc:
         raise SystemExit(
             f"❌ Blenderに接続できません ({host}:{port}): {exc}\n"
-            "   Blender側でBlenderMCPアドオンのパネルから 'Connect to MCP server' を\n"
-            "   押してポート9876でサーバーが起動しているか確認してください。"
+            "   BlenderMCPアドオンのパネルから 'Connect to MCP server' を押して\n"
+            "   ポート9876でサーバーが起動しているか確認してください。"
         ) from exc
     if not info.ok:
         raise SystemExit(f"❌ Blenderシーン情報の取得に失敗: {info.error}")
@@ -234,32 +316,39 @@ async def _check_ollama(base_url: str, model: str) -> None:
 
 # ── Main loop ───────────────────────────────────────────────────────────── #
 
-async def _generate_code(worker: OllamaProvider, user_prompt: str) -> str:
-    messages = [
-        LlmMessage(role="system", content=_WORKER_SYSTEM),
-        LlmMessage(role="user", content=user_prompt),
-    ]
-    response = await worker.complete(messages)
-    code = _strip_code_fences(response.text)
-    return _sanitize_bpy_code(code)
+async def _generate_code(builder: CodeBuilder, user_prompt: str) -> str:
+    raw = await builder.generate(_WORKER_SYSTEM, user_prompt)
+    return _sanitize_bpy_code(_strip_code_fences(raw))
 
 
 async def _execute_with_debug(
-    blender: BlenderTcpClient, worker: OllamaProvider, code: str, max_fixes: int = 2
+    blender: BlenderTcpClient,
+    builder: CodeBuilder,
+    code: str,
+    max_fixes: int = 2,
+    local_fixer: CodeBuilder | None = None,
 ) -> tuple[str, bool]:
-    """Run code in Blender; on Python errors let the worker self-debug."""
+    """Run code in Blender; on Python errors self-debug via hybrid LLM strategy.
+
+    Hybrid mode (local_fixer provided):
+      attempts 0..max_fixes-2  → local fixer  (fast, offline, low heat)
+      final attempt             → cloud builder (API knowledge, higher accuracy)
+    """
     for attempt in range(max_fixes + 1):
         result = await blender.call_tool("execute_blender_code", {"code": code})
         if result.ok:
             return code, True
         error = result.error or "unknown error"
-        print(f" ⚠️ Blender実行エラー (修正 {attempt + 1}/{max_fixes}): {error[:200]}")
         if attempt == max_fixes:
-            return code, False
-        code = await _generate_code(
-            worker, _FIX_TEMPLATE.format(code=code, error=error)
-        )
-    return code, False  # pragma: no cover
+            print(f" ⚠️ Blender実行エラー (最終試行): {error[:160]}")
+            break
+        # Choose fixer: local for early attempts, cloud as last resort.
+        use_local = local_fixer is not None and attempt < max_fixes - 1
+        fixer = local_fixer if use_local else builder
+        label = "ローカル修正" if use_local else "クラウド修正"
+        print(f" ⚠️ Blender実行エラー [{label} {attempt + 1}/{max_fixes}]: {error[:120]}")
+        code = await _generate_code(fixer, _FIX_TEMPLATE.format(code=code, error=error))
+    return code, False
 
 
 async def _main(args: argparse.Namespace) -> int:
@@ -271,34 +360,75 @@ async def _main(args: argparse.Namespace) -> int:
     print(f"\n=== Blenderライブモデリングテスト ===")
     print(f"要件: {args.requirement}\n")
 
-    # Preflight: all three actors must be reachable before we burn any tokens.
     blender = await _check_blender(args.host, args.port)
+
+    # Build the code-generation backend.
+    builder: CodeBuilder
+    local_fixer: CodeBuilder | None = None
     ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
-    await _check_ollama(ollama_url, args.worker_model)
+
+    if args.builder == "gemini":
+        api_key = os.environ.get("GEMINI_API_KEY", "")
+        if not api_key:
+            raise SystemExit("❌ GEMINI_API_KEY が未設定です。.env に設定してください。")
+        builder = GeminiCodeBuilder(api_key=api_key, model=args.builder_model)
+        print(f" 🟢 ビルダー: Gemini ({args.builder_model}) — クラウドLLM（高精度・省熱）")
+
+        # Hybrid: if Ollama is reachable, use it for fast first-pass error fixes.
+        # Cloud is reserved for the final (hardest) fix attempt.
+        if not args.no_local_fix:
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as hc:
+                    resp = await hc.get(f"{ollama_url}/api/tags")
+                    names = [m.get("name", "") for m in resp.json().get("models", [])]
+                if args.worker_model in names:
+                    local_fixer = OllamaCodeBuilder(
+                        OllamaProvider(
+                            ProviderConfig(
+                                provider="ollama",
+                                model=args.worker_model,
+                                base_url=ollama_url,
+                                max_tokens=1024,
+                                temperature=0.1,
+                            )
+                        )
+                    )
+                    print(
+                        f" 🟡 ローカル修正: Ollama ({args.worker_model}) "
+                        f"— エラー修正の初回試行に使用（省熱）"
+                    )
+            except Exception:
+                pass  # Ollama unavailable — cloud handles all fixes
+        if local_fixer is None:
+            print(" ℹ️  エラー修正: Gemini のみ（ハイブリッドなし）")
+    else:
+        await _check_ollama(ollama_url, args.worker_model)
+        builder = OllamaCodeBuilder(
+            OllamaProvider(
+                ProviderConfig(
+                    provider="ollama",
+                    model=args.worker_model,
+                    base_url=ollama_url,
+                    max_tokens=2048,
+                    temperature=0.2,
+                )
+            )
+        )
+        print(f" 🟢 ビルダー: Ollama ({args.worker_model}) — ローカルLLM")
 
     reviewer: GeminiVisionReviewer | None = None
     if not args.no_review:
-        api_key = os.environ.get("GEMINI_API_KEY", "")
-        if not api_key:
+        gemini_key = os.environ.get("GEMINI_API_KEY", "")
+        if not gemini_key:
             raise SystemExit(
                 "❌ GEMINI_API_KEY が未設定です。.env に設定するか --no-review を付けてください。"
             )
         reviewer = GeminiVisionReviewer(
-            api_key=api_key,
+            api_key=gemini_key,
             model=args.reviewer_model,
             score_threshold=args.score_threshold,
         )
         print(f" 🟢 レビューア: {args.reviewer_model} (合格スコア: {args.score_threshold})")
-
-    worker = OllamaProvider(
-        ProviderConfig(
-            provider="ollama",
-            model=args.worker_model,
-            base_url=ollama_url,
-            max_tokens=2048,
-            temperature=0.2,
-        )
-    )
 
     code = ""
     history: list[dict] = []
@@ -306,7 +436,6 @@ async def _main(args: argparse.Namespace) -> int:
         for iteration in range(1, args.iterations + 1):
             print(f"\n── イテレーション {iteration}/{args.iterations} ──")
 
-            # 1. Code generation (initial / revision).
             if iteration == 1:
                 prompt = _INITIAL_TEMPLATE.format(brief=args.requirement)
             else:
@@ -318,20 +447,20 @@ async def _main(args: argparse.Namespace) -> int:
                     score=prev["score"],
                     feedback=prev["feedback"],
                 )
-            print(" 🧠 ローカルLLMがBlenderスクリプトを生成中...")
-            code = await _generate_code(worker, prompt)
+
+            builder_label = "クラウドLLM" if args.builder == "gemini" else "ローカルLLM"
+            print(f" 🧠 {builder_label}がBlenderスクリプトを生成中...")
+            code = await _generate_code(builder, prompt)
             print(f"    生成: {len(code.splitlines())}行")
 
-            # 2. Execute in the live Blender (with self-debug retries).
             print(" 🛠️ Blenderで実行中...")
-            code, ok = await _execute_with_debug(blender, worker, code)
+            code, ok = await _execute_with_debug(blender, builder, code, local_fixer=local_fixer)
             if not ok:
                 print(" ❌ スクリプトを修正しきれませんでした。次のイテレーションへ。")
                 history.append({"score": 0, "feedback": "スクリプト実行エラー", "render": None})
                 continue
             print(" ✅ モデリング完了")
 
-            # 3. Render.
             render_path = str(outdir / f"iter_{iteration:02d}.png")
             print(" 📷 レンダリング中...")
             render = await blender.call_tool(
@@ -343,7 +472,6 @@ async def _main(args: argparse.Namespace) -> int:
                 continue
             print(f"    保存: {render_path}")
 
-            # 4. Design review.
             if reviewer is None:
                 history.append({"score": -1, "feedback": "(レビューなし)", "render": render_path})
                 print(" ℹ️ --no-review のためレビューをスキップしました。")
@@ -362,7 +490,6 @@ async def _main(args: argparse.Namespace) -> int:
     finally:
         await blender.close()
 
-    # Summary.
     print("\n" + "=" * 60)
     for i, entry in enumerate(history, start=1):
         score = "—" if entry["score"] < 0 else f"{entry['score']:>3}"
@@ -376,23 +503,37 @@ async def _main(args: argparse.Namespace) -> int:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Live Blender modeling with local LLM + design review.")
+    parser = argparse.ArgumentParser(
+        description="Live Blender modeling with cloud or local LLM + design review."
+    )
     parser.add_argument(
         "requirement",
         nargs="?",
         default="丸みを帯びたミニマルデザインのコンパクトなワイヤレスキーボードのコンセプトモデル",
     )
-    parser.add_argument("--host", default="localhost", help="BlenderMCP addon host")
-    parser.add_argument("--port", type=int, default=9876, help="BlenderMCP addon port")
-    parser.add_argument("--iterations", type=int, default=3, help="max build→review cycles")
+    parser.add_argument("--host", default="localhost")
+    parser.add_argument("--port", type=int, default=9876)
+    parser.add_argument("--iterations", type=int, default=3)
+    parser.add_argument(
+        "--builder", choices=["gemini", "ollama"], default="gemini",
+        help="LLM backend for bpy script generation (gemini=cloud/recommended, ollama=local)",
+    )
+    parser.add_argument(
+        "--builder-model", default="gemini-2.0-flash",
+        help="Model name for --builder gemini",
+    )
     parser.add_argument(
         "--worker-model", default="qwen2.5-coder:7b",
-        help="Ollama model that writes Blender Python (3b is faster on small machines)",
+        help="Ollama model (used only when --builder ollama)",
     )
-    parser.add_argument("--reviewer-model", default="gemini-2.0-flash", help="vision review model")
-    parser.add_argument("--score-threshold", type=int, default=75, help="passing review score")
-    parser.add_argument("--no-review", action="store_true", help="skip the design review step")
-    parser.add_argument("--outdir", default="outputs/blender_live", help="render output directory")
+    parser.add_argument("--reviewer-model", default="gemini-2.0-flash")
+    parser.add_argument("--score-threshold", type=int, default=75)
+    parser.add_argument("--no-review", action="store_true")
+    parser.add_argument(
+        "--no-local-fix", action="store_true",
+        help="Disable hybrid mode: use cloud builder for all error fixes too",
+    )
+    parser.add_argument("--outdir", default="outputs/blender_live")
     args = parser.parse_args()
     raise SystemExit(asyncio.run(_main(args)))
 
