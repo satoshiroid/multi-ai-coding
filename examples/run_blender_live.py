@@ -61,7 +61,25 @@ STRICT RULES:
 6. Create simple PRINCIPLED materials (base color, metallic, roughness) and assign them.
 7. Use primitives (bpy.ops.mesh.primitive_*), modifiers (Bevel, Subdivision) and
    simple loops for repeated parts (keys, buttons, vents).
-8. Keep the whole script under 120 lines and make it runnable top-to-bottom without errors."""
+8. Keep the whole script under 120 lines and make it runnable top-to-bottom without errors.
+
+CRITICAL API RULES — violating these causes AttributeError:
+- obj.type tells you the object type: 'MESH', 'LIGHT', 'CAMERA', etc.
+- Mesh data (obj.data when obj.type=='MESH') has: vertices, edges, faces, polygons — NOT energy/color/shadow.
+- Light data (obj.data when obj.type=='LIGHT') has: energy, color, shadow_soft_size — NOT vertices/faces.
+- To set light brightness: light_obj.data.energy = 5.0  (NOT light_obj.energy)
+- To make an emission material, use a ShaderNodeEmission on a material, do NOT set mesh.energy.
+- bpy.data.objects[name] returns an Object; accessing .data gives the object's datablock (Mesh or Light etc).
+- NEVER write obj.energy unless you have confirmed obj.type == 'LIGHT'.
+
+CORRECT material setup example:
+  mat = bpy.data.materials.new("Mat")
+  mat.use_nodes = True
+  bsdf = mat.node_tree.nodes["Principled BSDF"]
+  bsdf.inputs["Base Color"].default_value = (0.2, 0.2, 0.2, 1.0)
+  bsdf.inputs["Metallic"].default_value = 0.8
+  bsdf.inputs["Roughness"].default_value = 0.3
+  obj.data.materials.append(mat)"""
 
 _FIX_TEMPLATE = """Your previous Blender script raised an error.
 
