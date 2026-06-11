@@ -144,33 +144,40 @@ def _strip_code_fences(text: str) -> str:
 
 
 def _sanitize_bpy_code(code: str) -> str:
-    """Fix common small-model bpy API mistakes before sending to Blender.
-
-    Small models often set .energy on generic objects/meshes, which only
-    exists on bpy.types.Light datablocks.  Wrap those assignments in a
-    hasattr guard so they silently no-op on non-Light objects.
-    """
-    # obj.energy = X  →  if hasattr(obj, 'energy'): obj.energy = X
+    """Fix common small-model bpy API mistakes before sending to Blender."""
+    # obj.energy = X  →  guarded (energy only exists on Light datablocks)
     code = re.sub(
         r'^(\s*)(\w+)\.energy(\s*=)',
         r'\1if hasattr(\2, "energy"): \2.energy\3',
         code,
         flags=re.MULTILINE,
     )
-    # obj.data.energy = X  →  if hasattr(obj.data, 'energy'): obj.data.energy = X
+    # obj.data.energy = X  →  guarded
     code = re.sub(
         r'^(\s*)(\w+)\.data\.energy(\s*=)',
         r'\1if hasattr(\2.data, "energy"): \2.data.energy\3',
         code,
         flags=re.MULTILINE,
     )
-    # mat.energy = X  →  guarded
-    code = re.sub(
-        r'^(\s*)(\w+)\.energy(\s*=)',
-        r'\1if hasattr(\2, "energy"): \2.energy\3',
-        code,
-        flags=re.MULTILINE,
-    )
+    # Normalise mathutils.Vector calls: Vector((x, y)) → Vector((x, y, 0))
+    # Small models sometimes emit 2-component vectors in 3-D contexts.
+    def _fix_vector2d(m: re.Match) -> str:
+        inner = m.group(1).strip()
+        # Count top-level commas (not inside nested parens/brackets)
+        depth = 0
+        commas = 0
+        for ch in inner:
+            if ch in "([":
+                depth += 1
+            elif ch in ")]":
+                depth -= 1
+            elif ch == "," and depth == 0:
+                commas += 1
+        if commas == 1:
+            return f"Vector(({inner}, 0.0))"
+        return m.group(0)
+
+    code = re.sub(r"Vector\(\(([^()]+)\)\)", _fix_vector2d, code)
     return code
 
 
