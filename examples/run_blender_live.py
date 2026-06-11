@@ -143,6 +143,37 @@ def _strip_code_fences(text: str) -> str:
     return stripped
 
 
+def _sanitize_bpy_code(code: str) -> str:
+    """Fix common small-model bpy API mistakes before sending to Blender.
+
+    Small models often set .energy on generic objects/meshes, which only
+    exists on bpy.types.Light datablocks.  Wrap those assignments in a
+    hasattr guard so they silently no-op on non-Light objects.
+    """
+    # obj.energy = X  →  if hasattr(obj, 'energy'): obj.energy = X
+    code = re.sub(
+        r'^(\s*)(\w+)\.energy(\s*=)',
+        r'\1if hasattr(\2, "energy"): \2.energy\3',
+        code,
+        flags=re.MULTILINE,
+    )
+    # obj.data.energy = X  →  if hasattr(obj.data, 'energy'): obj.data.energy = X
+    code = re.sub(
+        r'^(\s*)(\w+)\.data\.energy(\s*=)',
+        r'\1if hasattr(\2.data, "energy"): \2.data.energy\3',
+        code,
+        flags=re.MULTILINE,
+    )
+    # mat.energy = X  →  guarded
+    code = re.sub(
+        r'^(\s*)(\w+)\.energy(\s*=)',
+        r'\1if hasattr(\2, "energy"): \2.energy\3',
+        code,
+        flags=re.MULTILINE,
+    )
+    return code
+
+
 # ── Preflight checks ────────────────────────────────────────────────────── #
 
 async def _check_blender(host: str, port: int) -> BlenderTcpClient:
@@ -192,7 +223,8 @@ async def _generate_code(worker: OllamaProvider, user_prompt: str) -> str:
         LlmMessage(role="user", content=user_prompt),
     ]
     response = await worker.complete(messages)
-    return _strip_code_fences(response.text)
+    code = _strip_code_fences(response.text)
+    return _sanitize_bpy_code(code)
 
 
 async def _execute_with_debug(
