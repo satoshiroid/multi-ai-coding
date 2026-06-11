@@ -143,8 +143,18 @@ def _strip_code_fences(text: str) -> str:
     return stripped
 
 
+_REQUIRED_IMPORTS = "import bpy\nimport math\nimport mathutils\nfrom mathutils import Vector, Matrix, Euler\ntry:\n    import bmesh\nexcept ImportError:\n    pass\n\n"
+
+
 def _sanitize_bpy_code(code: str) -> str:
     """Fix common small-model bpy API mistakes before sending to Blender."""
+    # Ensure required imports are present regardless of what the model emits.
+    # Strip any existing import lines first, then prepend a canonical block.
+    lines = [l for l in code.splitlines()
+             if not re.match(r'^\s*import\s+(bpy|math|mathutils|bmesh)', l)
+             and not re.match(r'^\s*from\s+(mathutils|bmesh)', l)]
+    code = _REQUIRED_IMPORTS + "\n".join(lines)
+
     # obj.energy = X  →  guarded (energy only exists on Light datablocks)
     code = re.sub(
         r'^(\s*)(\w+)\.energy(\s*=)',
