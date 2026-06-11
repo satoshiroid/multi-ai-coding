@@ -166,22 +166,31 @@ class GeminiCodeBuilder:
             "generationConfig": {"maxOutputTokens": 2048, "temperature": 0.2},
         }
         async with httpx.AsyncClient(timeout=60.0) as client:
+            last_err = ""
             for attempt in range(3):
                 try:
                     resp = await client.post(
                         self._url, params={"key": self._api_key}, json=payload
                     )
                     if resp.status_code == 429:
-                        await asyncio.sleep(2 ** attempt * 2)
+                        last_err = f"HTTP 429 (quota exceeded)"
+                        wait = 2 ** attempt * 5
+                        print(f"    Gemini rate limit — {wait}秒待機...")
+                        await asyncio.sleep(wait)
                         continue
-                    resp.raise_for_status()
+                    if resp.status_code != 200:
+                        last_err = f"HTTP {resp.status_code}: {resp.text[:200]}"
+                        raise RuntimeError(last_err)
                     data = resp.json()
                     return data["candidates"][0]["content"]["parts"][0]["text"]
-                except Exception:
+                except RuntimeError:
+                    raise
+                except Exception as exc:
+                    last_err = str(exc)
                     if attempt == 2:
                         raise
                     await asyncio.sleep(2 ** attempt)
-        raise RuntimeError("Gemini API unreachable after 3 retries")
+        raise RuntimeError(f"Gemini API failed after 3 retries: {last_err}")
 
 
 class OllamaCodeBuilder:
