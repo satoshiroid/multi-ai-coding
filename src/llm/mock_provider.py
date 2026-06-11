@@ -136,7 +136,7 @@ class MockProvider(LLMProvider):
         # Isolate the requirement: between "# Owner requirement" and the next
         # "# " header. Without the marker, scan the full text but with
         # Japanese keywords only (the English boilerplate never contains them).
-        section = re.search(r"# Owner requirement\s*\n(.*?)(?:\n# |\Z)", blob, re.DOTALL)
+        section = re.search(r"# Owner requirement\s*\n(.*?)(?:\n+# |\Z)", blob, re.DOTALL)
         if section:
             requirement = section.group(1)
             scan_english = True
