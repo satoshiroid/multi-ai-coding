@@ -1,10 +1,13 @@
 # =========================================================================
 # Hierarchical Multi-Agent Orchestration (HMAO) — runtime settings
 #
-# Each tier (L1/L2/L3) is mapped to an LLM provider + model.
-# L1/L2 (planning/arbitration, JSON tasks) run on the Gemini free tier;
-# L3 (tool operation: bpy/FreeCAD/KiCAD script generation) runs on Claude —
-# code accuracy is decisive there and retries cost more than tokens.
+# LLM assignment is two-layer:
+#   * `tiers` (L1/L2/L3) — the baseline fallback for any agent.
+#   * `agents` — per-agent placement that tunes each "virtual employee" to the
+#     LLM that plays to its strength (Gemini=fast planning, Claude=code/judgment,
+#     OpenAI=creative+general code). This is the active default.
+# Both are overridable from Git (env vars / GitHub Actions Variables) and the
+# run-time `llm` dropdown — see the precedence note above `agents:`.
 # Local LLMs (ollama) proved impractical for tool ops on 8GB-class machines
 # (qwen2.5-coder:3b lacks bpy knowledge; 7b does not fit) — see
 # docs/architecture-review.md.
@@ -30,6 +33,39 @@ tiers:
     fallback:
       provider: gemini
       model: gemini-2.0-flash
+
+# Per-agent LLM assignment ("virtual employees"). Each agent below overrides its
+# tier default so its character is tuned to that LLM's strength. Resolution
+# precedence (high→low):
+#   LLM_FORCE_* (run dropdown) > LLM_AGENT_<NAME>_* (Git vars) >
+#   agents.<name> (here) > LLM_L<tier>_* (Git vars) > tiers.L<n> (above).
+# Every primary has a cross-provider fallback so a transient 429/outage on one
+# provider never stalls the pipeline.
+agents:
+  pm:                              # L1 — planning/decomposition, high call volume
+    provider: gemini               #   Gemini: fast, cheap, large context for
+    model: gemini-2.0-flash        #   cross-domain block diagrams.
+    fallback: {provider: anthropic, model: claude-sonnet-4-6}
+  senior:                          # L2 — highest-stakes review / arbitration
+    provider: anthropic            #   Claude Opus: best careful judgment.
+    model: claude-opus-4-8
+    fallback: {provider: anthropic, model: claude-sonnet-4-6}
+  design:                          # L3 — industrial/UX design, multimodal
+    provider: openai               #   GPT-4o: creative + multimodal ideation.
+    model: gpt-4o
+    fallback: {provider: gemini, model: gemini-2.0-flash}
+  mecha:                           # L3 — FreeCAD parametric CAD, self-correcting
+    provider: anthropic            #   Claude Opus: code precision is decisive.
+    model: claude-opus-4-8
+    fallback: {provider: anthropic, model: claude-sonnet-4-6}
+  circuit:                         # L3 — KiCAD schematic / PCB / BOM
+    provider: anthropic            #   Claude Sonnet: structured EDA, balanced.
+    model: claude-sonnet-4-6
+    fallback: {provider: openai, model: gpt-4o-mini}
+  software:                        # L3 — firmware (C/C++) or app code
+    provider: openai               #   GPT-4o: strong general-purpose code.
+    model: gpt-4o
+    fallback: {provider: anthropic, model: claude-sonnet-4-6}
 
 # Provider connection defaults. API keys/URLs come from environment vars.
 providers:

@@ -14,7 +14,7 @@ from src.agents.worker_agents import BaseWorker
 from src.hitl import HitlManager
 from src.hitl.channels.base_channel import BaseChannel
 from src.hitl.channels.cli_channel import CliChannel
-from src.llm.factory import build_tiered_llms
+from src.llm.factory import build_agent_llm
 from src.mcp.client import McpServerSpec
 from src.models import Domain
 from src.orchestrator.consistency import ConsistencyChecker
@@ -45,17 +45,18 @@ def build_orchestrator(
     an auto-approving CLI channel — the configuration used by ``--mock`` runs
     and the test suite.
     """
-    llms = build_tiered_llms(settings, force_mock=force_mock)
-
+    # Each agent resolves its own LLM ("virtual employee"): per-agent settings
+    # win over the tier default, so PM/senior/each worker can run a different
+    # model. See src.llm.factory.resolve_agent_cfg for the precedence chain.
     pm = PMAgent(
         name="pm",
         system_prompt=agents_cfg["pm"]["system_prompt"],
-        llm=llms["L1"],
+        llm=build_agent_llm("pm", "L1", settings, force_mock=force_mock),
     )
     senior = SeniorAgent(
         name="senior",
         system_prompt=agents_cfg["senior"]["system_prompt"],
-        llm=llms["L2"],
+        llm=build_agent_llm("senior", "L2", settings, force_mock=force_mock),
     )
 
     # Build Blender MCP spec (injected into DesignWorker when enabled).
@@ -77,7 +78,7 @@ def build_orchestrator(
         workers[domain] = build_worker(
             domain=domain,
             system_prompt=wcfg["system_prompt"],
-            llm=llms["L3"],
+            llm=build_agent_llm(key, "L3", settings, force_mock=force_mock),
             name=f"{key}_worker",
             blender_spec=blender_spec if domain == Domain.DESIGN else None,
         )

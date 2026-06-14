@@ -50,10 +50,8 @@ jobs:
       project_type: ${{ steps.route.outputs.project_type }}
       requirement: ${{ steps.route.outputs.requirement }}
       thread_id: ${{ steps.route.outputs.thread_id }}
-      llm_provider: ${{ steps.route.outputs.llm_provider }}
-      llm_l1_model: ${{ steps.route.outputs.llm_l1_model }}
-      llm_l2_model: ${{ steps.route.outputs.llm_l2_model }}
-      llm_l3_model: ${{ steps.route.outputs.llm_l3_model }}
+      llm_force_provider: ${{ steps.route.outputs.llm_force_provider }}
+      llm_force_model: ${{ steps.route.outputs.llm_force_model }}
     steps:
       - id: route
         # All user-controlled values come in via env (never inlined into the
@@ -85,22 +83,21 @@ jobs:
           else
             RUNNER='"ubuntu-latest"'
           fi
-          # LLM dropdown → provider + per-tier models. "default"/empty leaves the
-          # selection to repo Variables / settings.yaml (no override emitted).
+          # LLM dropdown → a global FORCE override that wins over every agent
+          # for this run. "default"/empty leaves selection to the per-agent
+          # settings.yaml / Variables.
           case "$(printf '%s' "$LLM" | tr '[:upper:]' '[:lower:]')" in
-            claude) LP=anthropic; M1=claude-haiku-4-5-20251001; M2=claude-haiku-4-5-20251001; M3=claude-opus-4-8 ;;
-            gemini) LP=gemini;    M1=gemini-2.0-flash;          M2=gemini-2.0-flash;          M3=gemini-2.0-flash ;;
-            openai) LP=openai;    M1=gpt-4o-mini;               M2=gpt-4o-mini;               M3=gpt-4o ;;
-            *)      LP="";        M1="";                        M2="";                        M3="" ;;
+            claude) FP=anthropic; FM=claude-sonnet-4-6 ;;
+            gemini) FP=gemini;    FM=gemini-2.0-flash ;;
+            openai) FP=openai;    FM=gpt-4o ;;
+            *)      FP="";        FM="" ;;
           esac
           {
             echo "runner=$RUNNER"
             echo "project_type=$TYPE"
             echo "thread_id=$THREAD"
-            echo "llm_provider=$LP"
-            echo "llm_l1_model=$M1"
-            echo "llm_l2_model=$M2"
-            echo "llm_l3_model=$M3"
+            echo "llm_force_provider=$FP"
+            echo "llm_force_model=$FM"
           } >> "$GITHUB_OUTPUT"
           # requirement may contain spaces/newlines → heredoc-form output.
           {
@@ -141,17 +138,31 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OLLAMA_BASE_URL: ${{ secrets.OLLAMA_BASE_URL }}
-          # LLM *selection*: the run's `llm` dropdown wins; otherwise fall back to
-          # repository Variables; empty → config/settings.yaml. Keys stay in
-          # Secrets above. (Per-tier fallback overridable via LLM_L{n}_FALLBACK_*.)
-          LLM_PROVIDER: ${{ vars.LLM_PROVIDER }}
-          LLM_MODEL: ${{ vars.LLM_MODEL }}
-          LLM_L1_PROVIDER: ${{ needs.setup.outputs.llm_provider != '' && needs.setup.outputs.llm_provider || vars.LLM_L1_PROVIDER }}
-          LLM_L1_MODEL: ${{ needs.setup.outputs.llm_l1_model != '' && needs.setup.outputs.llm_l1_model || vars.LLM_L1_MODEL }}
-          LLM_L2_PROVIDER: ${{ needs.setup.outputs.llm_provider != '' && needs.setup.outputs.llm_provider || vars.LLM_L2_PROVIDER }}
-          LLM_L2_MODEL: ${{ needs.setup.outputs.llm_l2_model != '' && needs.setup.outputs.llm_l2_model || vars.LLM_L2_MODEL }}
-          LLM_L3_PROVIDER: ${{ needs.setup.outputs.llm_provider != '' && needs.setup.outputs.llm_provider || vars.LLM_L3_PROVIDER }}
-          LLM_L3_MODEL: ${{ needs.setup.outputs.llm_l3_model != '' && needs.setup.outputs.llm_l3_model || vars.LLM_L3_MODEL }}
+          # LLM selection. Precedence (high→low): FORCE (dropdown) > per-agent
+          # Variables > settings.yaml `agents` > per-tier Variables > settings.yaml
+          # `tiers`. Keys stay in Secrets above; selection is non-secret here.
+          LLM_FORCE_PROVIDER: ${{ needs.setup.outputs.llm_force_provider }}
+          LLM_FORCE_MODEL: ${{ needs.setup.outputs.llm_force_model }}
+          # Per-agent overrides (optional; blank → settings.yaml agents block).
+          LLM_AGENT_PM_PROVIDER: ${{ vars.LLM_AGENT_PM_PROVIDER }}
+          LLM_AGENT_PM_MODEL: ${{ vars.LLM_AGENT_PM_MODEL }}
+          LLM_AGENT_SENIOR_PROVIDER: ${{ vars.LLM_AGENT_SENIOR_PROVIDER }}
+          LLM_AGENT_SENIOR_MODEL: ${{ vars.LLM_AGENT_SENIOR_MODEL }}
+          LLM_AGENT_DESIGN_PROVIDER: ${{ vars.LLM_AGENT_DESIGN_PROVIDER }}
+          LLM_AGENT_DESIGN_MODEL: ${{ vars.LLM_AGENT_DESIGN_MODEL }}
+          LLM_AGENT_MECHA_PROVIDER: ${{ vars.LLM_AGENT_MECHA_PROVIDER }}
+          LLM_AGENT_MECHA_MODEL: ${{ vars.LLM_AGENT_MECHA_MODEL }}
+          LLM_AGENT_CIRCUIT_PROVIDER: ${{ vars.LLM_AGENT_CIRCUIT_PROVIDER }}
+          LLM_AGENT_CIRCUIT_MODEL: ${{ vars.LLM_AGENT_CIRCUIT_MODEL }}
+          LLM_AGENT_SOFTWARE_PROVIDER: ${{ vars.LLM_AGENT_SOFTWARE_PROVIDER }}
+          LLM_AGENT_SOFTWARE_MODEL: ${{ vars.LLM_AGENT_SOFTWARE_MODEL }}
+          # Per-tier baseline overrides (optional).
+          LLM_L1_PROVIDER: ${{ vars.LLM_L1_PROVIDER }}
+          LLM_L1_MODEL: ${{ vars.LLM_L1_MODEL }}
+          LLM_L2_PROVIDER: ${{ vars.LLM_L2_PROVIDER }}
+          LLM_L2_MODEL: ${{ vars.LLM_L2_MODEL }}
+          LLM_L3_PROVIDER: ${{ vars.LLM_L3_PROVIDER }}
+          LLM_L3_MODEL: ${{ vars.LLM_L3_MODEL }}
           # Keep CI state out of the repo working tree.
           STATE_DB_PATH: ${{ runner.temp }}/state.db
         run: |
