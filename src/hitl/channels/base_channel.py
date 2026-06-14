@@ -49,3 +49,18 @@ class BaseChannel(ABC):
     @abstractmethod
     async def push_progress(self, thread_id: str, message: str) -> None:
         """Post a progress update."""
+
+    async def push_choice(
+        self,
+        thread_id: str,
+        request: HitlRequest,
+        options: list[str],
+        image_paths: list[str] | None = None,
+    ) -> None:
+        """Present a proposal-style choice (one selectable option per proposal).
+
+        ``image_paths`` lets callers show sketch proposals alongside the options
+        (e.g. design selection). Default delegates to :meth:`push_escalation`;
+        transports that can resolve the owner's selection override this.
+        """
+        await self.push_escalation(thread_id, request.title, request.body, options)

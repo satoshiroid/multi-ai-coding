@@ -89,6 +89,18 @@ providers:
     max_tokens: 4096
     temperature: 0.2
 
+# Design sketch image generation. The design worker writes short briefs and this
+# turns them into N sketch proposals for selection-based approval (cheaper than
+# generating Blender code). Switch provider freely; env IMAGE_PROVIDER/IMAGE_MODEL
+# override. Key comes from api_key_env (defaults to the provider's LLM key).
+image:
+  enabled: true
+  provider: openai            # openai (gpt-image-1) | gemini (nanobanana)
+  model: gpt-image-1
+  api_key_env: OPENAI_API_KEY # Gemini 利用時は GEMINI_API_KEY + gemini-2.5-flash-image
+  count: 3                    # number of sketch proposals
+  size: "1024x1024"
+
 # Escalation: L3 confidence below this routes the task up to L2.
 escalation:
   confidence_threshold: 70

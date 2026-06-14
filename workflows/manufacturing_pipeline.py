@@ -170,7 +170,10 @@ APP_PIPELINE: tuple[Stage, ...] = (
         notes="デザインワーカーが画面設計・ワイヤーフレーム・遷移フローを作成。",
         instruction_hints={
             Domain.DESIGN: (
-                "アプリのUI/UXデザインを生成してください（blender_script は不要）。\n"
+                "アプリのUI/UXデザインを生成してください。\n"
+                "artifacts.sketch_prompts: 主要画面のUIモックアップを描くための画像生成プロンプトを"
+                "2-3案（異なるレイアウト/トーンの方向性。各々が1枚のUIモックアップ画像になる具体的な"
+                "視覚描写。例: 配色・主要コンポーネント配置・画面構成）。\n"
                 "artifacts.design_spec: 画面一覧・各画面の主要コンポーネント・"
                 "画面遷移フロー・配色/タイポグラフィ（コンパクトに）。\n"
                 "metadata: target_platform (web/ios/android/desktop/cli) を必ず含めること。"

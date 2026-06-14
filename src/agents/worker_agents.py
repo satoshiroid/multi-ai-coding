@@ -27,9 +27,14 @@ _RESULT_SCHEMA_HINT = (
 # Design worker allows a short blender_script in artifacts.
 _DESIGN_SCHEMA_HINT = (
     '{"summary": str, "confidence_score": int (0-100), '
-    '"artifacts": {"blender_script": str (minimal Blender Python, under 40 lines), '
+    '"artifacts": {'
+    '"sketch_prompts": [str, str, str] '
+    '(2-3 DISTINCT design directions, each a vivid concise image-generation '
+    'prompt describing the product concept for a design sketch — different forms/'
+    'layouts, not minor variations), '
     '"design_spec": object (compact design spec)}, '
-    '"metadata": object}'
+    '"metadata": object} '
+    '(for software/app UI tasks, sketch_prompts describe UI mockups)'
 )
 
 # Implementation stages (task.allow_code=True): code files are allowed but must
@@ -128,9 +133,17 @@ class DesignWorker(BaseWorker):
 
     domain = Domain.DESIGN
 
-    def __init__(self, name: str, system_prompt: str, llm: TieredLLM, blender_spec: Any = None):
+    def __init__(
+        self,
+        name: str,
+        system_prompt: str,
+        llm: TieredLLM,
+        blender_spec: Any = None,
+        image_cfg: dict | None = None,
+    ):
         super().__init__(name=name, system_prompt=system_prompt, llm=llm)
         self._blender_spec = blender_spec
+        self._image_cfg = image_cfg or {}
 
     async def execute(self, task: TaskSpec) -> AgentResult:
         prompt = self._build_prompt(task)
@@ -163,37 +176,102 @@ class DesignWorker(BaseWorker):
             metadata=metadata,
         )
 
-        # If Blender MCP is enabled and LLM produced a script, render it.
+        # Primary: turn the design briefs into sketch images for the owner to
+        # pick from (cheaper than generating Blender code).
+        await self._generate_sketches(task, artifacts, result)
+
+        # Backward-compat: still render a Blender script if one was produced.
         if self._blender_spec is not None and getattr(self._blender_spec, "enabled", False):
-            script = artifacts.get("blender_script", "")
-            if script:
-                await self._render_blender(task.task_id, script, result)
+            for i, (label, script) in enumerate(self._variant_scripts(artifacts)[:3], start=1):
+                await self._render_blender(task.task_id, script, result, index=i, label=label)
 
         return result
 
-    async def _render_blender(self, task_id: str, script: str, result: AgentResult) -> None:
-        """Execute script in Blender and attach the render path to result."""
+    async def _generate_sketches(
+        self, task: TaskSpec, artifacts: dict, result: AgentResult
+    ) -> None:
+        """Generate sketch images from the design briefs (best effort)."""
+        cfg = self._image_cfg
+        if not cfg or not cfg.get("enabled"):
+            return
+        prompts = artifacts.get("sketch_prompts")
+        if not isinstance(prompts, list) or not prompts:
+            return
+        from src.image_gen import ImageGenError, generate_images
+
+        out_dir = os.path.join(os.getcwd(), "data", "sketches", task.task_id)
+        try:
+            paths = await generate_images(
+                [str(p) for p in prompts[: int(cfg.get("count", 3))]],
+                provider=cfg.get("provider"),
+                model=cfg.get("model"),
+                api_key=cfg.get("api_key"),
+                out_dir=out_dir,
+                size=cfg.get("size", "1024x1024"),
+            )
+        except ImageGenError as exc:
+            result.metadata["image_gen_error"] = str(exc)
+            return
+        for i, path in enumerate(paths, start=1):
+            result.artifacts[f"sketch_image_{i}"] = path
+        result.metadata["sketch_count"] = len(paths)
+
+    @staticmethod
+    def _variant_scripts(artifacts: dict) -> list[tuple[str, str]]:
+        """Extract (label, blender_script) pairs — multiple variants or a single."""
+        out: list[tuple[str, str]] = []
+        variants = artifacts.get("variants")
+        if isinstance(variants, list):
+            for i, v in enumerate(variants, start=1):
+                if isinstance(v, dict) and v.get("blender_script"):
+                    out.append((str(v.get("name") or f"案{i}"), str(v["blender_script"])))
+        if not out and artifacts.get("blender_script"):  # backward-compatible single
+            out.append(("案1", str(artifacts["blender_script"])))
+        return out
+
+    async def _render_blender(
+        self,
+        task_id: str,
+        script: str,
+        result: AgentResult,
+        *,
+        index: int | None = None,
+        label: str | None = None,
+    ) -> None:
+        """Execute one script in Blender and attach its render path to result."""
         from src.mcp.blender_client import BlenderClient
         from src.mcp.client import client_for_spec
 
         render_dir = os.path.join(os.getcwd(), "data", "renders")
         os.makedirs(render_dir, exist_ok=True)
-        render_path = os.path.join(render_dir, f"{task_id}.png")
+        suffix = f"_{index}" if index else ""
+        render_path = os.path.join(render_dir, f"{task_id}{suffix}.png")
+        err_key = f"blender_error_{index}" if index else "blender_error"
+
+        # LLMs sometimes emit Unicode minus/dashes (− – —) where Python needs an
+        # ASCII hyphen, which is a SyntaxError. Normalize before executing.
+        script = script.translate(
+            {0x2212: 0x2D, 0x2013: 0x2D, 0x2014: 0x2D, 0x2010: 0x2D, 0x2011: 0x2D, 0xFF0D: 0x2D}
+        )
 
         try:
             async with BlenderClient(client_for_spec(self._blender_spec)) as bl:
                 run_result = await bl.run_python(script)
                 if not run_result.ok:
-                    result.metadata["blender_script_error"] = run_result.error
+                    result.metadata[f"blender_script_error{suffix}"] = run_result.error
                     return
                 render_result = await bl.render(render_path)
                 if render_result.ok:
-                    result.artifacts["render_image"] = render_path
+                    img_key = f"render_image_{index}" if index else "render_image"
+                    result.artifacts[img_key] = render_path
+                    result.metadata.setdefault("renders", []).append(
+                        {"label": label or img_key, "path": render_path}
+                    )
                     result.metadata["blender_rendered"] = True
                 else:
-                    result.metadata["blender_render_error"] = render_result.error
-        except Exception as exc:
-            result.metadata["blender_error"] = str(exc)
+                    result.metadata[f"blender_render_error{suffix}"] = render_result.error
+        except Exception as exc:  # noqa: BLE001
+            result.metadata[err_key] = str(exc)
 
 
 class MechaWorker(BaseWorker):
@@ -228,6 +306,7 @@ def build_worker(
     llm: TieredLLM,
     name: str | None = None,
     blender_spec: Any = None,
+    image_cfg: dict | None = None,
 ) -> BaseWorker:
     """Instantiate the worker for ``domain`` (defaults name to ``<domain>_worker``)."""
     cls = _WORKER_CLASSES.get(domain)
@@ -239,5 +318,6 @@ def build_worker(
             system_prompt=system_prompt,
             llm=llm,
             blender_spec=blender_spec,
+            image_cfg=image_cfg,
         )
     return cls(name=name or f"{domain.value}_worker", system_prompt=system_prompt, llm=llm)

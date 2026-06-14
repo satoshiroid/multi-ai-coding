@@ -72,6 +72,11 @@ def build_orchestrator(
         port=int(blender_cfg["port"]) if blender_cfg.get("port") else None,
     ) if blender_cfg else None
 
+    # Design sketch image-gen config (off under mock so tests make no calls).
+    from src.image_gen import resolve_image_config
+
+    image_cfg = None if force_mock else resolve_image_config(settings)
+
     workers: dict[Domain, BaseWorker] = {}
     for key, domain in _WORKER_DOMAINS.items():
         wcfg = agents_cfg["workers"][key]
@@ -81,6 +86,7 @@ def build_orchestrator(
             llm=build_agent_llm(key, "L3", settings, force_mock=force_mock),
             name=f"{key}_worker",
             blender_spec=blender_spec if domain == Domain.DESIGN else None,
+            image_cfg=image_cfg if domain == Domain.DESIGN else None,
         )
 
     if channel is None:
