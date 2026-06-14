@@ -1,0 +1,91 @@
+# =========================================================================
+# Hierarchical Multi-Agent Orchestration (HMAO) — runtime settings
+#
+# Each tier (L1/L2/L3) is mapped to an LLM provider + model.
+# L1/L2 (planning/arbitration, JSON tasks) run on the Gemini free tier;
+# L3 (tool operation: bpy/FreeCAD/KiCAD script generation) runs on Claude —
+# code accuracy is decisive there and retries cost more than tokens.
+# Local LLMs (ollama) proved impractical for tool ops on 8GB-class machines
+# (qwen2.5-coder:3b lacks bpy knowledge; 7b does not fit) — see
+# docs/architecture-review.md.
+# =========================================================================
+
+# Per-tier LLM assignment (hybrid cost strategy by default).
+tiers:
+  L1:                              # PM / Orchestrator
+    provider: gemini
+    model: gemini-2.0-flash
+    fallback:
+      provider: gemini
+      model: gemini-2.0-flash
+  L2:                              # Senior design manager
+    provider: gemini
+    model: gemini-2.0-flash
+    fallback:
+      provider: gemini
+      model: gemini-2.0-flash
+  L3:                              # Workers (implement / debug / tool ops)
+    provider: anthropic
+    model: claude-opus-4-8
+    fallback:
+      provider: gemini
+      model: gemini-2.0-flash
+
+# Provider connection defaults. API keys/URLs come from environment vars.
+providers:
+  anthropic:
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 8192
+    temperature: 0.2
+  gemini:
+    api_key_env: GEMINI_API_KEY
+    max_tokens: 8192
+    temperature: 0.2
+    # Exponential backoff on 429 (free-tier rate limit) before failing over.
+    rate_limit_retries: 3
+    rate_limit_base_delay: 2.0
+  ollama:
+    base_url_env: OLLAMA_BASE_URL
+    max_tokens: 4096
+    temperature: 0.2
+
+# Escalation: L3 confidence below this routes the task up to L2.
+escalation:
+  confidence_threshold: 70
+
+# Cross-domain consistency tolerances (mm).
+consistency:
+  clearance_margin_mm: 1.0        # required gap between PCB edge and enclosure inner wall
+  mount_tolerance_mm: 0.5         # mounting-hole alignment tolerance
+
+# Human-in-the-loop behaviour.
+hitl:
+  timeout_hours: 72
+  notify_progress: true           # post per-stage progress to the project thread
+
+# MCP servers for CAD/EDA tools. `command`/`args` launch a local stdio server;
+# leave `enabled: false` to use the built-in mock transport (CI / no-CAD env).
+mcp:
+  blender:
+    # BlenderMCP addon (ahujasid/blender-mcp): the in-Blender "Running on port
+    # 9876" server is a raw JSON-over-TCP socket, NOT an MCP/SSE endpoint —
+    # transport `tcp` speaks that protocol directly (no uvx bridge needed).
+    enabled: true
+    transport: tcp
+    host: localhost
+    port: 9876
+  freecad:
+    enabled: false
+    transport: stdio
+    command: freecad-mcp
+    args: []
+  kicad:
+    enabled: false
+    transport: stdio
+    command: kicad-mcp
+    args: []
+
+# State persistence.
+state:
+  db_path_env: STATE_DB_PATH
+  db_path_default: ./data/state.db

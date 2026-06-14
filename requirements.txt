@@ -1,0 +1,27 @@
+# LLM providers (Python >= 3.10 required; google-genai is the NEW Gemini SDK)
+anthropic>=0.40.0
+google-genai>=1.0.0
+
+# MCP (Model Context Protocol) client
+mcp>=1.2.0
+
+# Data models / validation
+pydantic>=2.6.0
+
+# Async server / web
+fastapi>=0.110.0
+uvicorn>=0.29.0
+httpx>=0.27.0
+
+# Discord owner channel
+discord.py>=2.4.0
+
+# Config / CLI
+pyyaml>=6.0
+rich>=13.7.0
+python-dotenv>=1.0.0
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+pytest-timeout>=2.3.0
