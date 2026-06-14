@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from src.llm.factory import TieredLLM, build_provider, build_tiered_llms
+from src.llm.factory import (
+    TieredLLM,
+    _tier_env_override,
+    build_provider,
+    build_tiered_llms,
+)
 from src.llm.mock_provider import MockProvider
 from src.llm.provider import LLMResponse, ProviderConfig, extract_json
 from src.models import LlmMessage
@@ -28,6 +33,40 @@ def test_build_tiered_llms_force_mock():
     assert set(llms) == {"L1", "L3"}
     assert isinstance(llms["L1"], TieredLLM)
     assert isinstance(llms["L1"].primary, MockProvider)
+
+
+def test_tier_env_override_tier_specific(monkeypatch):
+    monkeypatch.setenv("LLM_L3_PROVIDER", "anthropic")
+    monkeypatch.setenv("LLM_L3_MODEL", "claude-opus-4-8")
+    cfg = _tier_env_override("L3", {"provider": "gemini", "model": "gemini-flash"})
+    assert cfg == {"provider": "anthropic", "model": "claude-opus-4-8"}
+
+
+def test_tier_env_override_global_and_fallback(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("LLM_MODEL", "claude-haiku-4-5-20251001")
+    monkeypatch.setenv("LLM_L1_FALLBACK_PROVIDER", "gemini")
+    monkeypatch.setenv("LLM_L1_FALLBACK_MODEL", "gemini-2.0-flash")
+    cfg = _tier_env_override(
+        "L1", {"provider": "gemini", "model": "g", "fallback": {"provider": "gemini", "model": "g"}}
+    )
+    assert cfg["provider"] == "anthropic"
+    assert cfg["model"] == "claude-haiku-4-5-20251001"
+    assert cfg["fallback"] == {"provider": "gemini", "model": "gemini-2.0-flash"}
+
+
+def test_tier_env_override_noop_without_env(monkeypatch):
+    for var in ("LLM_PROVIDER", "LLM_MODEL", "LLM_L3_PROVIDER", "LLM_L3_MODEL"):
+        monkeypatch.delenv(var, raising=False)
+    original = {"provider": "gemini", "model": "gemini-flash"}
+    assert _tier_env_override("L3", original) == original
+
+
+def test_build_tiered_llms_honors_env_override(monkeypatch):
+    monkeypatch.setenv("LLM_L3_PROVIDER", "anthropic")
+    monkeypatch.setenv("LLM_L3_MODEL", "claude-x")
+    llms = build_tiered_llms(_settings())
+    assert type(llms["L3"].primary).__name__ == "AnthropicProvider"
 
 
 def test_build_provider_unknown_raises():

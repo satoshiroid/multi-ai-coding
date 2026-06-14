@@ -40,6 +40,21 @@ GitHub → Actions → `build` → *Run workflow* で `requirement` と `project
 
 > LLMキーはここ（GitHub側）に置く。リポジトリのファイルには絶対に入れない。
 
+#### LLM選択（Settings → Secrets and variables → Actions → **Variables**）
+provider/model は非機密なので **Variables** で選ぶ（`settings.yaml` を編集せずGitで切替）。
+優先順位: `LLM_L{n}_*`（tier別） > `LLM_*`（全体） > `settings.yaml`。provider と model はセットで設定する。
+
+| 変数 | 例 | 対象 |
+|---|---|---|
+| `LLM_L1_PROVIDER` / `LLM_L1_MODEL` | `anthropic` / `claude-haiku-4-5-20251001` | PM |
+| `LLM_L2_PROVIDER` / `LLM_L2_MODEL` | `anthropic` / `claude-haiku-4-5-20251001` | Senior |
+| `LLM_L3_PROVIDER` / `LLM_L3_MODEL` | `anthropic` / `claude-opus-4-8` | Workers |
+| `LLM_PROVIDER` / `LLM_MODEL` | — | 全tier一括の既定 |
+
+> **注意（実測）**: Gemini無料枠は `gemini-2.0-flash` で `limit: 0`（枯渇/無効）になり得る。
+> その場合は上記Variablesで Anthropic を選ぶか、Gemini課金を有効化する。`settings.yaml`
+> 既定の「L1/L2=Gemini無料」のままだと L1 で 429 停止する。
+
 ### 2. self-hosted ランナー（hardware用 / Macで実行）
 - リポジトリ Settings → Actions → Runners → *New self-hosted runner*（macOS）。
 - ラベルに **`self-hosted` と `macOS`** が付くこと（`build.yml` の routing がこの2ラベルで解決）。

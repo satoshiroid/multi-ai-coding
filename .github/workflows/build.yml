@@ -116,6 +116,17 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OLLAMA_BASE_URL: ${{ secrets.OLLAMA_BASE_URL }}
+          # LLM *selection* — managed in GitHub Variables (non-secret). Empty =
+          # fall back to config/settings.yaml. Set provider+model together.
+          # (Per-tier fallback also overridable via LLM_L{1,2,3}_FALLBACK_*.)
+          LLM_PROVIDER: ${{ vars.LLM_PROVIDER }}
+          LLM_MODEL: ${{ vars.LLM_MODEL }}
+          LLM_L1_PROVIDER: ${{ vars.LLM_L1_PROVIDER }}
+          LLM_L1_MODEL: ${{ vars.LLM_L1_MODEL }}
+          LLM_L2_PROVIDER: ${{ vars.LLM_L2_PROVIDER }}
+          LLM_L2_MODEL: ${{ vars.LLM_L2_MODEL }}
+          LLM_L3_PROVIDER: ${{ vars.LLM_L3_PROVIDER }}
+          LLM_L3_MODEL: ${{ vars.LLM_L3_MODEL }}
           # Keep CI state out of the repo working tree.
           STATE_DB_PATH: ${{ runner.temp }}/state.db
         run: |

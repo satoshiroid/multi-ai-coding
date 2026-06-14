@@ -97,23 +97,62 @@ def build_provider(
     return cls(config)
 
 
+def _tier_env_override(tier: str, cfg: dict[str, Any]) -> dict[str, Any]:
+    """Overlay env-provided LLM selection on a tier's settings.yaml config.
+
+    Lets the provider/model live in Git (GitHub Actions *variables*) or ``.env``
+    rather than only in ``settings.yaml`` — API keys stay in Secrets. Precedence:
+    tier-specific env (``LLM_L3_PROVIDER``) > global env (``LLM_PROVIDER``) >
+    settings.yaml. Set provider and model together when switching providers, so
+    you never pair (e.g.) ``anthropic`` with a leftover Gemini model name.
+    """
+    tu = tier.upper()
+    out = {k: (dict(v) if isinstance(v, dict) else v) for k, v in cfg.items()}
+
+    provider = os.environ.get(f"LLM_{tu}_PROVIDER") or os.environ.get("LLM_PROVIDER")
+    model = os.environ.get(f"LLM_{tu}_MODEL") or os.environ.get("LLM_MODEL")
+    if provider:
+        out["provider"] = provider
+    if model:
+        out["model"] = model
+
+    fb_provider = os.environ.get(f"LLM_{tu}_FALLBACK_PROVIDER") or os.environ.get(
+        "LLM_FALLBACK_PROVIDER"
+    )
+    fb_model = os.environ.get(f"LLM_{tu}_FALLBACK_MODEL") or os.environ.get(
+        "LLM_FALLBACK_MODEL"
+    )
+    if fb_provider or fb_model:
+        fb = dict(out.get("fallback") or {})
+        if fb_provider:
+            fb["provider"] = fb_provider
+        if fb_model:
+            fb["model"] = fb_model
+        out["fallback"] = fb
+
+    return out
+
+
 def build_tiered_llms(
     settings: dict[str, Any], *, force_mock: bool = False
 ) -> dict[str, TieredLLM]:
     """Build a ``{tier: TieredLLM}`` map from the full settings dict.
 
-    When ``force_mock`` is set, every tier uses the deterministic mock provider
-    (used for ``--mock`` E2E runs and tests).
+    Per-tier provider/model can be overridden via environment variables (see
+    :func:`_tier_env_override`) so the LLM choice is selectable from Git without
+    editing ``settings.yaml``. When ``force_mock`` is set, every tier uses the
+    deterministic mock provider (used for ``--mock`` E2E runs and tests).
     """
     tiers_cfg: dict[str, Any] = settings.get("tiers", {})
     providers_cfg: dict[str, Any] = settings.get("providers", {})
 
     result: dict[str, TieredLLM] = {}
-    for tier, cfg in tiers_cfg.items():
+    for tier, raw_cfg in tiers_cfg.items():
         if force_mock:
             result[tier] = TieredLLM(tier, MockProvider())
             continue
 
+        cfg = _tier_env_override(tier, raw_cfg)
         primary = build_provider(cfg["provider"], cfg["model"], providers_cfg)
 
         fallback = None
