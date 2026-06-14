@@ -26,7 +26,14 @@ class FakeAddon:
     async def stop(self) -> None:
         if self.server is not None:
             self.server.close()
-            await self.server.wait_closed()
+            # Python 3.12's Server.wait_closed() waits for *all* connections and
+            # can block indefinitely on a lingering one (a behaviour difference
+            # vs 3.11/3.14 that hung CI). Bound it so fixture teardown can't hang.
+            try:
+                await asyncio.wait_for(self.server.wait_closed(), timeout=2.0)
+            except (asyncio.TimeoutError, Exception):  # noqa: BLE001
+                pass
+            self.server = None
 
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         buffer = b""
