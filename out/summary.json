@@ -1,0 +1,22 @@
+{
+  "project_id": "proj-a99b2c0b",
+  "project_type": "app",
+  "status": "done",
+  "current_stage": 8,
+  "requirement": "シンプルな日本語の単語帳CLIアプリ。単語の追加・一覧・ランダム出題ができる。SQLiteで永続化。",
+  "domains": {
+    "design": {
+      "summary": "CLIアプリのUI/UX設計を行い、コマンド体系、出力フォーマット、エラーメッセージ、UXフローを定義しました。",
+      "confidence_score": 95,
+      "metadata": {
+        "target_platform": "cli"
+      }
+    },
+    "software": {
+      "summary": "MVP implementation for a simple word management CLI application with database operations and testing.",
+      "confidence_score": 90,
+      "metadata": {}
+    }
+  },
+  "bom": []
+}
