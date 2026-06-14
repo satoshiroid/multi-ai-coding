@@ -19,10 +19,12 @@ from src.llm.anthropic_provider import AnthropicProvider
 from src.llm.gemini_provider import GeminiProvider
 from src.llm.mock_provider import MockProvider
 from src.llm.ollama_provider import OllamaProvider
+from src.llm.openai_provider import OpenAIProvider
 
 _PROVIDER_CLASSES: dict[str, type[LLMProvider]] = {
     "anthropic": AnthropicProvider,
     "gemini": GeminiProvider,
+    "openai": OpenAIProvider,
     "ollama": OllamaProvider,
     "mock": MockProvider,
 }
@@ -163,3 +165,82 @@ def build_tiered_llms(
         result[tier] = TieredLLM(tier, primary, fallback)
 
     return result
+
+
+# --------------------------------------------------------------------------- #
+# Per-agent resolution ("virtual employees")
+# --------------------------------------------------------------------------- #
+# Each agent (pm/senior/design/mecha/circuit/software) can run a different LLM,
+# so its "character" is tunable independently. Resolution precedence, high→low:
+#
+#   1. LLM_FORCE_PROVIDER / LLM_FORCE_MODEL    — force every agent (the dropdown)
+#   2. LLM_AGENT_<NAME>_*  env                 — per-agent override (Git vars)
+#   3. settings.yaml  agents.<name>            — per-agent default placement
+#   4. LLM_L<tier>_*  env                      — per-tier override (Git vars)
+#   5. settings.yaml  tiers.L<n>               — per-tier default
+def _agent_env_override(agent: str, cfg: dict[str, Any]) -> dict[str, Any]:
+    """Overlay ``LLM_AGENT_<AGENT>_*`` env onto a resolved config."""
+    au = agent.upper()
+    out = {k: (dict(v) if isinstance(v, dict) else v) for k, v in cfg.items()}
+
+    provider = os.environ.get(f"LLM_AGENT_{au}_PROVIDER")
+    model = os.environ.get(f"LLM_AGENT_{au}_MODEL")
+    if provider:
+        out["provider"] = provider
+    if model:
+        out["model"] = model
+
+    fb_provider = os.environ.get(f"LLM_AGENT_{au}_FALLBACK_PROVIDER")
+    fb_model = os.environ.get(f"LLM_AGENT_{au}_FALLBACK_MODEL")
+    if fb_provider or fb_model:
+        fb = dict(out.get("fallback") or {})
+        if fb_provider:
+            fb["provider"] = fb_provider
+        if fb_model:
+            fb["model"] = fb_model
+        out["fallback"] = fb
+    return out
+
+
+def _force_env_override(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Apply the global ``LLM_FORCE_PROVIDER``/``LLM_FORCE_MODEL`` (dropdown)."""
+    provider = os.environ.get("LLM_FORCE_PROVIDER")
+    model = os.environ.get("LLM_FORCE_MODEL")
+    if not provider and not model:
+        return cfg
+    out = {k: (dict(v) if isinstance(v, dict) else v) for k, v in cfg.items()}
+    if provider:
+        out["provider"] = provider
+    if model:
+        out["model"] = model
+    return out
+
+
+def resolve_agent_cfg(agent: str, tier: str, settings: dict[str, Any]) -> dict[str, Any]:
+    """Resolve the final provider/model/fallback for one agent (see precedence)."""
+    cfg = _tier_env_override(tier, settings.get("tiers", {}).get(tier, {}))
+    agent_cfg = settings.get("agents", {}).get(agent) or {}
+    if agent_cfg:
+        cfg = {**cfg, **agent_cfg}
+    cfg = _agent_env_override(agent, cfg)
+    cfg = _force_env_override(cfg)
+    return cfg
+
+
+def build_agent_llm(
+    agent: str, tier: str, settings: dict[str, Any], *, force_mock: bool = False
+) -> TieredLLM:
+    """Build the :class:`TieredLLM` for one named agent on its tier."""
+    if force_mock:
+        return TieredLLM(tier, MockProvider())
+
+    cfg = resolve_agent_cfg(agent, tier, settings)
+    providers_cfg: dict[str, Any] = settings.get("providers", {})
+    primary = build_provider(cfg["provider"], cfg["model"], providers_cfg)
+
+    fallback = None
+    fb = cfg.get("fallback")
+    if fb:
+        fallback = build_provider(fb["provider"], fb["model"], providers_cfg)
+
+    return TieredLLM(tier, primary, fallback)

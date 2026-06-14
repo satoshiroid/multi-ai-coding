@@ -69,6 +69,83 @@ def test_build_tiered_llms_honors_env_override(monkeypatch):
     assert type(llms["L3"].primary).__name__ == "AnthropicProvider"
 
 
+def test_openai_provider_registered():
+    from src.llm.factory import _PROVIDER_CLASSES
+
+    assert "openai" in _PROVIDER_CLASSES
+
+
+def test_build_tiered_llms_openai_via_env(monkeypatch):
+    monkeypatch.setenv("LLM_L3_PROVIDER", "openai")
+    monkeypatch.setenv("LLM_L3_MODEL", "gpt-4o")
+    settings = _settings()
+    settings["providers"]["openai"] = {"api_key_env": "NOPE_KEY"}
+    llms = build_tiered_llms(settings)
+    assert type(llms["L3"].primary).__name__ == "OpenAIProvider"
+
+
+def _settings_with_agents() -> dict:
+    s = _settings()
+    s["agents"] = {
+        "design": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "fallback": {"provider": "gemini", "model": "gemini-2.0-flash"},
+        }
+    }
+    s["providers"]["openai"] = {"api_key_env": "NOPE_KEY"}
+    return s
+
+
+def test_agent_cfg_uses_agent_block_over_tier():
+    from src.llm.factory import resolve_agent_cfg
+
+    cfg = resolve_agent_cfg("design", "L3", _settings_with_agents())
+    assert cfg["provider"] == "openai" and cfg["model"] == "gpt-4o"
+
+
+def test_agent_cfg_falls_back_to_tier_when_unlisted():
+    from src.llm.factory import resolve_agent_cfg
+
+    # "mecha" is not in the agents block → inherits tier L3 (gemini in _settings).
+    cfg = resolve_agent_cfg("mecha", "L3", _settings_with_agents())
+    assert cfg["provider"] == "gemini"
+
+
+def test_agent_env_overrides_agent_block(monkeypatch):
+    from src.llm.factory import resolve_agent_cfg
+
+    monkeypatch.setenv("LLM_AGENT_DESIGN_PROVIDER", "anthropic")
+    monkeypatch.setenv("LLM_AGENT_DESIGN_MODEL", "claude-sonnet-4-6")
+    cfg = resolve_agent_cfg("design", "L3", _settings_with_agents())
+    assert cfg["provider"] == "anthropic" and cfg["model"] == "claude-sonnet-4-6"
+
+
+def test_force_env_wins_over_everything(monkeypatch):
+    from src.llm.factory import resolve_agent_cfg
+
+    monkeypatch.setenv("LLM_AGENT_DESIGN_PROVIDER", "anthropic")  # lower precedence
+    monkeypatch.setenv("LLM_FORCE_PROVIDER", "gemini")
+    monkeypatch.setenv("LLM_FORCE_MODEL", "gemini-2.0-flash")
+    cfg = resolve_agent_cfg("design", "L3", _settings_with_agents())
+    assert cfg["provider"] == "gemini" and cfg["model"] == "gemini-2.0-flash"
+
+
+def test_build_agent_llm_force_mock():
+    from src.llm.factory import build_agent_llm
+
+    llm = build_agent_llm("design", "L3", _settings_with_agents(), force_mock=True)
+    assert isinstance(llm.primary, MockProvider)
+
+
+def test_build_agent_llm_builds_primary_and_fallback():
+    from src.llm.factory import build_agent_llm
+
+    llm = build_agent_llm("design", "L3", _settings_with_agents())
+    assert type(llm.primary).__name__ == "OpenAIProvider"
+    assert type(llm.fallback).__name__ == "GeminiProvider"
+
+
 def test_build_provider_unknown_raises():
     with pytest.raises(ValueError):
         build_provider("does-not-exist", "m", {})

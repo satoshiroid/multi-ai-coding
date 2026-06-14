@@ -32,28 +32,40 @@ GitHub → Actions → `build` → *Run workflow* で `requirement` と `project
 
 ## セットアップ・チェックリスト（手動작업）
 
-### 1. GitHub Secrets（リポジトリ Settings → Secrets and variables → Actions）
-- `ANTHROPIC_API_KEY`
+### 1. GitHub Secrets（リポジトリ Settings → Secrets and variables → Actions → **Secrets**）
+- `ANTHROPIC_API_KEY` （Claude）
 - `GEMINI_API_KEY`
+- `OPENAI_API_KEY` （OpenAI を使う場合）
 - `OLLAMA_BASE_URL`（任意）
 - `DISCORD_WEBHOOK_URL`（任意・PRリンク通知用。intake用フォーラムchに作成したWebhook）
 
-> LLMキーはここ（GitHub側）に置く。リポジトリのファイルには絶対に入れない。
+> LLMキーはここ（GitHub側）に置く。リポジトリのファイルには絶対に入れない。新しい
+> キーは *New repository secret* から入力する（＝OpenAIキーの入力欄）。
 
-#### LLM選択（Settings → Secrets and variables → Actions → **Variables**）
-provider/model は非機密なので **Variables** で選ぶ（`settings.yaml` を編集せずGitで切替）。
-優先順位: `LLM_L{n}_*`（tier別） > `LLM_*`（全体） > `settings.yaml`。provider と model はセットで設定する。
+#### LLMの割り当て（エージェント単位＝バーチャル社員）
+各エージェントは**特性に合わせて別LLM**を割り当て済み（`config/settings.yaml` の `agents:`）。
+1つが瞬間的に429/障害でも止まらないよう、全primaryにクロスプロバイダのfallback付き。
 
-| 変数 | 例 | 対象 |
-|---|---|---|
-| `LLM_L1_PROVIDER` / `LLM_L1_MODEL` | `anthropic` / `claude-haiku-4-5-20251001` | PM |
-| `LLM_L2_PROVIDER` / `LLM_L2_MODEL` | `anthropic` / `claude-haiku-4-5-20251001` | Senior |
-| `LLM_L3_PROVIDER` / `LLM_L3_MODEL` | `anthropic` / `claude-opus-4-8` | Workers |
-| `LLM_PROVIDER` / `LLM_MODEL` | — | 全tier一括の既定 |
+| エージェント | 既定 (primary) | fallback | 狙い |
+|---|---|---|---|
+| pm (L1) | **Gemini** 2.0 Flash | Claude Sonnet 4.6 | 高速・安価・大コンテキストの計画/分解 |
+| senior (L2) | **Claude Opus** 4.8 | Claude Sonnet 4.6 | 最重要の判断/調停 |
+| design (L3) | **GPT-4o** | Gemini 2.0 Flash | 創造的・多モーダルな意匠/UX |
+| mecha (L3) | **Claude Opus** 4.8 | Claude Sonnet 4.6 | パラメトリックCADコードの精度 |
+| circuit (L3) | **Claude Sonnet** 4.6 | GPT-4o-mini | 構造化EDA/BOM |
+| software (L3) | **GPT-4o** | Claude Sonnet 4.6 | 汎用コード生成（ファーム/アプリ） |
 
-> **注意（実測）**: Gemini無料枠は `gemini-2.0-flash` で `limit: 0`（枯渇/無効）になり得る。
-> その場合は上記Variablesで Anthropic を選ぶか、Gemini課金を有効化する。`settings.yaml`
-> 既定の「L1/L2=Gemini無料」のままだと L1 で 429 停止する。
+（意匠のレンダリング画像レビューは別途 Gemini Vision を使用。）
+
+#### 変えたいとき（優先順位 高→低）
+1. **手動ドロップダウン** — Actions → `build` → *Run workflow* の `llm`（claude/gemini/openai）。
+   選ぶとその実行は**全エージェントを1モデルに強制**（A/Bテスト用。`default`=下に従う）。
+2. **エージェント単位の上書き** — Variables `LLM_AGENT_<NAME>_PROVIDER` / `_MODEL`
+   （NAME ∈ PM/SENIOR/DESIGN/MECHA/CIRCUIT/SOFTWARE）。`settings.yaml` を編集せずGitで切替。
+3. **`config/settings.yaml` の `agents:`** — 既定の配置（上表）。Git管理。
+4. **tier単位** — Variables `LLM_L{1,2,3}_*` / `settings.yaml` の `tiers:`（fallback baseline）。
+
+provider と model はセットで指定。providers: `anthropic`(Claude) / `gemini` / `openai` / `ollama`。
 
 ### 2. self-hosted ランナー（hardware用 / Macで実行）
 - リポジトリ Settings → Actions → Runners → *New self-hosted runner*（macOS）。

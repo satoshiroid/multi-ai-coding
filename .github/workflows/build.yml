@@ -27,6 +27,12 @@ on:
         required: true
         type: choice
         options: [app, hardware]
+      llm:
+        description: "LLM（default=リポジトリ変数/設定を使用）"
+        required: false
+        type: choice
+        default: default
+        options: [default, claude, gemini, openai]
       thread_id:
         description: "Discord スレッドID（通知用・任意）"
         required: false
@@ -44,6 +50,8 @@ jobs:
       project_type: ${{ steps.route.outputs.project_type }}
       requirement: ${{ steps.route.outputs.requirement }}
       thread_id: ${{ steps.route.outputs.thread_id }}
+      llm_force_provider: ${{ steps.route.outputs.llm_force_provider }}
+      llm_force_model: ${{ steps.route.outputs.llm_force_model }}
     steps:
       - id: route
         # All user-controlled values come in via env (never inlined into the
@@ -53,15 +61,17 @@ jobs:
           RD_TYPE: ${{ github.event.client_payload.project_type }}
           RD_REQ: ${{ github.event.client_payload.requirement }}
           RD_THREAD: ${{ github.event.client_payload.thread_id }}
+          RD_LLM: ${{ github.event.client_payload.llm }}
           WD_TYPE: ${{ github.event.inputs.project_type }}
           WD_REQ: ${{ github.event.inputs.requirement }}
           WD_THREAD: ${{ github.event.inputs.thread_id }}
+          WD_LLM: ${{ github.event.inputs.llm }}
         run: |
           set -euo pipefail
           if [ "$EVENT" = "repository_dispatch" ]; then
-            TYPE="$RD_TYPE"; REQ="$RD_REQ"; THREAD="$RD_THREAD"
+            TYPE="$RD_TYPE"; REQ="$RD_REQ"; THREAD="$RD_THREAD"; LLM="${RD_LLM:-}"
           else
-            TYPE="$WD_TYPE"; REQ="$WD_REQ"; THREAD="$WD_THREAD"
+            TYPE="$WD_TYPE"; REQ="$WD_REQ"; THREAD="$WD_THREAD"; LLM="${WD_LLM:-}"
           fi
           TYPE="$(printf '%s' "$TYPE" | tr '[:upper:]' '[:lower:]')"
           if [ "$TYPE" != "app" ] && [ "$TYPE" != "hardware" ]; then
@@ -73,10 +83,21 @@ jobs:
           else
             RUNNER='"ubuntu-latest"'
           fi
+          # LLM dropdown → a global FORCE override that wins over every agent
+          # for this run. "default"/empty leaves selection to the per-agent
+          # settings.yaml / Variables.
+          case "$(printf '%s' "$LLM" | tr '[:upper:]' '[:lower:]')" in
+            claude) FP=anthropic; FM=claude-sonnet-4-6 ;;
+            gemini) FP=gemini;    FM=gemini-2.0-flash ;;
+            openai) FP=openai;    FM=gpt-4o ;;
+            *)      FP="";        FM="" ;;
+          esac
           {
             echo "runner=$RUNNER"
             echo "project_type=$TYPE"
             echo "thread_id=$THREAD"
+            echo "llm_force_provider=$FP"
+            echo "llm_force_model=$FM"
           } >> "$GITHUB_OUTPUT"
           # requirement may contain spaces/newlines → heredoc-form output.
           {
@@ -115,12 +136,27 @@ jobs:
           # LLM credentials — managed entirely in GitHub Secrets.
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OLLAMA_BASE_URL: ${{ secrets.OLLAMA_BASE_URL }}
-          # LLM *selection* — managed in GitHub Variables (non-secret). Empty =
-          # fall back to config/settings.yaml. Set provider+model together.
-          # (Per-tier fallback also overridable via LLM_L{1,2,3}_FALLBACK_*.)
-          LLM_PROVIDER: ${{ vars.LLM_PROVIDER }}
-          LLM_MODEL: ${{ vars.LLM_MODEL }}
+          # LLM selection. Precedence (high→low): FORCE (dropdown) > per-agent
+          # Variables > settings.yaml `agents` > per-tier Variables > settings.yaml
+          # `tiers`. Keys stay in Secrets above; selection is non-secret here.
+          LLM_FORCE_PROVIDER: ${{ needs.setup.outputs.llm_force_provider }}
+          LLM_FORCE_MODEL: ${{ needs.setup.outputs.llm_force_model }}
+          # Per-agent overrides (optional; blank → settings.yaml agents block).
+          LLM_AGENT_PM_PROVIDER: ${{ vars.LLM_AGENT_PM_PROVIDER }}
+          LLM_AGENT_PM_MODEL: ${{ vars.LLM_AGENT_PM_MODEL }}
+          LLM_AGENT_SENIOR_PROVIDER: ${{ vars.LLM_AGENT_SENIOR_PROVIDER }}
+          LLM_AGENT_SENIOR_MODEL: ${{ vars.LLM_AGENT_SENIOR_MODEL }}
+          LLM_AGENT_DESIGN_PROVIDER: ${{ vars.LLM_AGENT_DESIGN_PROVIDER }}
+          LLM_AGENT_DESIGN_MODEL: ${{ vars.LLM_AGENT_DESIGN_MODEL }}
+          LLM_AGENT_MECHA_PROVIDER: ${{ vars.LLM_AGENT_MECHA_PROVIDER }}
+          LLM_AGENT_MECHA_MODEL: ${{ vars.LLM_AGENT_MECHA_MODEL }}
+          LLM_AGENT_CIRCUIT_PROVIDER: ${{ vars.LLM_AGENT_CIRCUIT_PROVIDER }}
+          LLM_AGENT_CIRCUIT_MODEL: ${{ vars.LLM_AGENT_CIRCUIT_MODEL }}
+          LLM_AGENT_SOFTWARE_PROVIDER: ${{ vars.LLM_AGENT_SOFTWARE_PROVIDER }}
+          LLM_AGENT_SOFTWARE_MODEL: ${{ vars.LLM_AGENT_SOFTWARE_MODEL }}
+          # Per-tier baseline overrides (optional).
           LLM_L1_PROVIDER: ${{ vars.LLM_L1_PROVIDER }}
           LLM_L1_MODEL: ${{ vars.LLM_L1_MODEL }}
           LLM_L2_PROVIDER: ${{ vars.LLM_L2_PROVIDER }}

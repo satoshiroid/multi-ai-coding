@@ -1,6 +1,7 @@
 # LLM providers (Python >= 3.10 required; google-genai is the NEW Gemini SDK)
 anthropic>=0.40.0
 google-genai>=1.0.0
+openai>=1.0.0
 
 # MCP (Model Context Protocol) client
 mcp>=1.2.0
