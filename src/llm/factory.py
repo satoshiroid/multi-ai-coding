@@ -19,10 +19,12 @@ from src.llm.anthropic_provider import AnthropicProvider
 from src.llm.gemini_provider import GeminiProvider
 from src.llm.mock_provider import MockProvider
 from src.llm.ollama_provider import OllamaProvider
+from src.llm.openai_provider import OpenAIProvider
 
 _PROVIDER_CLASSES: dict[str, type[LLMProvider]] = {
     "anthropic": AnthropicProvider,
     "gemini": GeminiProvider,
+    "openai": OpenAIProvider,
     "ollama": OllamaProvider,
     "mock": MockProvider,
 }

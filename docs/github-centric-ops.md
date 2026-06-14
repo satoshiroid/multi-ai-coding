@@ -32,17 +32,26 @@ GitHub → Actions → `build` → *Run workflow* で `requirement` と `project
 
 ## セットアップ・チェックリスト（手動작업）
 
-### 1. GitHub Secrets（リポジトリ Settings → Secrets and variables → Actions）
-- `ANTHROPIC_API_KEY`
+### 1. GitHub Secrets（リポジトリ Settings → Secrets and variables → Actions → **Secrets**）
+- `ANTHROPIC_API_KEY` （Claude）
 - `GEMINI_API_KEY`
+- `OPENAI_API_KEY` （OpenAI を使う場合）
 - `OLLAMA_BASE_URL`（任意）
 - `DISCORD_WEBHOOK_URL`（任意・PRリンク通知用。intake用フォーラムchに作成したWebhook）
 
-> LLMキーはここ（GitHub側）に置く。リポジトリのファイルには絶対に入れない。
+> LLMキーはここ（GitHub側）に置く。リポジトリのファイルには絶対に入れない。新しい
+> キーは *New repository secret* から入力する（＝OpenAIキーの入力欄）。
 
-#### LLM選択（Settings → Secrets and variables → Actions → **Variables**）
-provider/model は非機密なので **Variables** で選ぶ（`settings.yaml` を編集せずGitで切替）。
-優先順位: `LLM_L{n}_*`（tier別） > `LLM_*`（全体） > `settings.yaml`。provider と model はセットで設定する。
+#### LLMの選び方（2通り）
+**(a) 手動実行のドロップダウン** — Actions → `build` → *Run workflow* の `llm` で
+`claude / gemini / openai` を選ぶ（`default`=下のVariables/設定に従う）。選ぶと
+provider＋モデルがその実行に適用される（claude: L1/L2=Haiku・L3=Opus / gemini:
+flash / openai: L1/L2=gpt-4o-mini・L3=gpt-4o）。
+
+**(b) 既定値（Discord経由や手動default時）** — Settings → … → **Variables** で設定。
+provider/model は非機密なので Variables で選ぶ（`settings.yaml` を編集せずGitで切替）。
+優先順位: 手動ドロップダウン > `LLM_L{n}_*`（tier別） > `LLM_*`（全体） > `settings.yaml`。
+provider と model はセットで設定する。providers: `anthropic`(Claude) / `gemini` / `openai` / `ollama`。
 
 | 変数 | 例 | 対象 |
 |---|---|---|

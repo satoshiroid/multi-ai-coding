@@ -44,6 +44,10 @@ providers:
     # Exponential backoff on 429 (free-tier rate limit) before failing over.
     rate_limit_retries: 3
     rate_limit_base_delay: 2.0
+  openai:
+    api_key_env: OPENAI_API_KEY
+    max_tokens: 8192
+    temperature: 0.2
   ollama:
     base_url_env: OLLAMA_BASE_URL
     max_tokens: 4096

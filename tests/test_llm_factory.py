@@ -69,6 +69,21 @@ def test_build_tiered_llms_honors_env_override(monkeypatch):
     assert type(llms["L3"].primary).__name__ == "AnthropicProvider"
 
 
+def test_openai_provider_registered():
+    from src.llm.factory import _PROVIDER_CLASSES
+
+    assert "openai" in _PROVIDER_CLASSES
+
+
+def test_build_tiered_llms_openai_via_env(monkeypatch):
+    monkeypatch.setenv("LLM_L3_PROVIDER", "openai")
+    monkeypatch.setenv("LLM_L3_MODEL", "gpt-4o")
+    settings = _settings()
+    settings["providers"]["openai"] = {"api_key_env": "NOPE_KEY"}
+    llms = build_tiered_llms(settings)
+    assert type(llms["L3"].primary).__name__ == "OpenAIProvider"
+
+
 def test_build_provider_unknown_raises():
     with pytest.raises(ValueError):
         build_provider("does-not-exist", "m", {})

@@ -27,6 +27,12 @@ on:
         required: true
         type: choice
         options: [app, hardware]
+      llm:
+        description: "LLM（default=リポジトリ変数/設定を使用）"
+        required: false
+        type: choice
+        default: default
+        options: [default, claude, gemini, openai]
       thread_id:
         description: "Discord スレッドID（通知用・任意）"
         required: false
@@ -44,6 +50,10 @@ jobs:
       project_type: ${{ steps.route.outputs.project_type }}
       requirement: ${{ steps.route.outputs.requirement }}
       thread_id: ${{ steps.route.outputs.thread_id }}
+      llm_provider: ${{ steps.route.outputs.llm_provider }}
+      llm_l1_model: ${{ steps.route.outputs.llm_l1_model }}
+      llm_l2_model: ${{ steps.route.outputs.llm_l2_model }}
+      llm_l3_model: ${{ steps.route.outputs.llm_l3_model }}
     steps:
       - id: route
         # All user-controlled values come in via env (never inlined into the
@@ -53,15 +63,17 @@ jobs:
           RD_TYPE: ${{ github.event.client_payload.project_type }}
           RD_REQ: ${{ github.event.client_payload.requirement }}
           RD_THREAD: ${{ github.event.client_payload.thread_id }}
+          RD_LLM: ${{ github.event.client_payload.llm }}
           WD_TYPE: ${{ github.event.inputs.project_type }}
           WD_REQ: ${{ github.event.inputs.requirement }}
           WD_THREAD: ${{ github.event.inputs.thread_id }}
+          WD_LLM: ${{ github.event.inputs.llm }}
         run: |
           set -euo pipefail
           if [ "$EVENT" = "repository_dispatch" ]; then
-            TYPE="$RD_TYPE"; REQ="$RD_REQ"; THREAD="$RD_THREAD"
+            TYPE="$RD_TYPE"; REQ="$RD_REQ"; THREAD="$RD_THREAD"; LLM="${RD_LLM:-}"
           else
-            TYPE="$WD_TYPE"; REQ="$WD_REQ"; THREAD="$WD_THREAD"
+            TYPE="$WD_TYPE"; REQ="$WD_REQ"; THREAD="$WD_THREAD"; LLM="${WD_LLM:-}"
           fi
           TYPE="$(printf '%s' "$TYPE" | tr '[:upper:]' '[:lower:]')"
           if [ "$TYPE" != "app" ] && [ "$TYPE" != "hardware" ]; then
@@ -73,10 +85,22 @@ jobs:
           else
             RUNNER='"ubuntu-latest"'
           fi
+          # LLM dropdown → provider + per-tier models. "default"/empty leaves the
+          # selection to repo Variables / settings.yaml (no override emitted).
+          case "$(printf '%s' "$LLM" | tr '[:upper:]' '[:lower:]')" in
+            claude) LP=anthropic; M1=claude-haiku-4-5-20251001; M2=claude-haiku-4-5-20251001; M3=claude-opus-4-8 ;;
+            gemini) LP=gemini;    M1=gemini-2.0-flash;          M2=gemini-2.0-flash;          M3=gemini-2.0-flash ;;
+            openai) LP=openai;    M1=gpt-4o-mini;               M2=gpt-4o-mini;               M3=gpt-4o ;;
+            *)      LP="";        M1="";                        M2="";                        M3="" ;;
+          esac
           {
             echo "runner=$RUNNER"
             echo "project_type=$TYPE"
             echo "thread_id=$THREAD"
+            echo "llm_provider=$LP"
+            echo "llm_l1_model=$M1"
+            echo "llm_l2_model=$M2"
+            echo "llm_l3_model=$M3"
           } >> "$GITHUB_OUTPUT"
           # requirement may contain spaces/newlines → heredoc-form output.
           {
@@ -115,18 +139,19 @@ jobs:
           # LLM credentials — managed entirely in GitHub Secrets.
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OLLAMA_BASE_URL: ${{ secrets.OLLAMA_BASE_URL }}
-          # LLM *selection* — managed in GitHub Variables (non-secret). Empty =
-          # fall back to config/settings.yaml. Set provider+model together.
-          # (Per-tier fallback also overridable via LLM_L{1,2,3}_FALLBACK_*.)
+          # LLM *selection*: the run's `llm` dropdown wins; otherwise fall back to
+          # repository Variables; empty → config/settings.yaml. Keys stay in
+          # Secrets above. (Per-tier fallback overridable via LLM_L{n}_FALLBACK_*.)
           LLM_PROVIDER: ${{ vars.LLM_PROVIDER }}
           LLM_MODEL: ${{ vars.LLM_MODEL }}
-          LLM_L1_PROVIDER: ${{ vars.LLM_L1_PROVIDER }}
-          LLM_L1_MODEL: ${{ vars.LLM_L1_MODEL }}
-          LLM_L2_PROVIDER: ${{ vars.LLM_L2_PROVIDER }}
-          LLM_L2_MODEL: ${{ vars.LLM_L2_MODEL }}
-          LLM_L3_PROVIDER: ${{ vars.LLM_L3_PROVIDER }}
-          LLM_L3_MODEL: ${{ vars.LLM_L3_MODEL }}
+          LLM_L1_PROVIDER: ${{ needs.setup.outputs.llm_provider != '' && needs.setup.outputs.llm_provider || vars.LLM_L1_PROVIDER }}
+          LLM_L1_MODEL: ${{ needs.setup.outputs.llm_l1_model != '' && needs.setup.outputs.llm_l1_model || vars.LLM_L1_MODEL }}
+          LLM_L2_PROVIDER: ${{ needs.setup.outputs.llm_provider != '' && needs.setup.outputs.llm_provider || vars.LLM_L2_PROVIDER }}
+          LLM_L2_MODEL: ${{ needs.setup.outputs.llm_l2_model != '' && needs.setup.outputs.llm_l2_model || vars.LLM_L2_MODEL }}
+          LLM_L3_PROVIDER: ${{ needs.setup.outputs.llm_provider != '' && needs.setup.outputs.llm_provider || vars.LLM_L3_PROVIDER }}
+          LLM_L3_MODEL: ${{ needs.setup.outputs.llm_l3_model != '' && needs.setup.outputs.llm_l3_model || vars.LLM_L3_MODEL }}
           # Keep CI state out of the repo working tree.
           STATE_DB_PATH: ${{ runner.temp }}/state.db
         run: |
