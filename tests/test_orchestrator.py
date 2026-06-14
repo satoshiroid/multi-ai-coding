@@ -25,6 +25,26 @@ async def test_full_pipeline_reaches_done():
 
 
 @pytest.mark.asyncio
+async def test_intake_project_type_app_pins_app_pipeline():
+    """An intake-provided type pins the pipeline without PM classification."""
+    settings, agents = _cfg()
+    orch = build_orchestrator(settings, agents, force_mock=True)
+    state = await orch.run("メモ管理アプリ", project_id="app-pin", project_type="app")
+    assert state.project_type == "app"
+    assert state.current_stage == 8  # APP_PIPELINE is 8 stages
+    assert "mecha" not in state.results  # no hardware domains in the app flow
+
+
+@pytest.mark.asyncio
+async def test_intake_project_type_hardware_pins_hardware_pipeline():
+    settings, agents = _cfg()
+    orch = build_orchestrator(settings, agents, force_mock=True)
+    state = await orch.run("環境モニター", project_id="hw-pin", project_type="hardware")
+    assert state.project_type == "hardware"
+    assert state.current_stage == 9
+
+
+@pytest.mark.asyncio
 async def test_pipeline_collects_bom():
     settings, agents = _cfg()
     orch = build_orchestrator(settings, agents, force_mock=True)

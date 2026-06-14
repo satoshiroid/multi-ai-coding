@@ -69,23 +69,45 @@ class PMOrchestrator:
         self.notify_progress = notify_progress
         # Active pipeline — starts as hardware default, updated after PM stage.
         self._active_pipeline: tuple[Stage, ...] = PIPELINE
+        # Intake-provided project type ("app"/"hardware"); when set it pins the
+        # pipeline and overrides the PM's own classification. None → PM decides.
+        self._forced_project_type: str | None = None
 
     # ------------------------------------------------------------------ #
     # Public entry point
     # ------------------------------------------------------------------ #
     async def run(
-        self, requirement: str, *, project_id: str | None = None, thread_id: str | None = None
+        self,
+        requirement: str,
+        *,
+        project_id: str | None = None,
+        thread_id: str | None = None,
+        project_type: str | None = None,
     ) -> ProjectState:
-        """Run the whole pipeline for one natural-language requirement."""
+        """Run the whole pipeline for one natural-language requirement.
+
+        ``project_type`` ("app"/"hardware"), when provided, comes from the intake
+        (e.g. the Discord channel the request arrived on) and pins the pipeline up
+        front — the PM is never asked to classify. Left as ``None``, the PM
+        classifies at stage 2 as before.
+        """
+        forced_type = (
+            normalize_project_type(project_type) if project_type is not None else None
+        )
+        self._forced_project_type = forced_type
         state = ProjectState(
             project_id=project_id or f"proj-{uuid.uuid4().hex[:8]}",
             thread_id=thread_id,
             requirement=requirement,
+            project_type=forced_type or "hardware",
             status=StageStatus.RUNNING,
         )
         self._persist(state)
 
-        self._active_pipeline = PIPELINE  # reset; switched after PM classifies project type
+        # Pin the pipeline up front when intake gave the type; else start on the
+        # hardware default and switch after the PM classifies. Stages 1–2 are
+        # shared between both pipelines, so an early pin never skips shared work.
+        self._active_pipeline = select_pipeline(forced_type) if forced_type else PIPELINE
         plan: dict[str, Any] = {}
         index = 1
         while index <= stage_count(self._active_pipeline):
@@ -96,13 +118,17 @@ class PMOrchestrator:
             next_index, plan = await self._run_stage(stage, state, plan)
 
             # After PM planning: pick the right pipeline for this project type.
+            # An intake-provided type wins over the PM's own classification.
             if stage.kind == StageKind.PM:
-                project_type = plan.get("project_type", "hardware")
-                self._active_pipeline = select_pipeline(project_type)
-                state.project_type = normalize_project_type(project_type)
+                resolved_type = self._forced_project_type or plan.get(
+                    "project_type", "hardware"
+                )
+                self._active_pipeline = select_pipeline(resolved_type)
+                state.project_type = normalize_project_type(resolved_type)
                 self._persist(state)
+                source = "intake" if self._forced_project_type else "PM判定"
                 await self._progress(
-                    state, f"🗂️ プロジェクト種別: {state.project_type}"
+                    state, f"🗂️ プロジェクト種別: {state.project_type} ({source})"
                 )
 
             if next_index is None:  # rejected / aborted
