@@ -20,6 +20,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10          # backstop: never let a hung test burn a runner
     steps:
       - uses: actions/checkout@v4
 
