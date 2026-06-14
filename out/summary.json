@@ -1,0 +1,25 @@
+{
+  "project_id": "proj-93125a19",
+  "project_type": "app",
+  "status": "done",
+  "current_stage": 8,
+  "requirement": "# 目的\nAIのフロントエンド開発能力を評価するため、以下の仕様を満たすシンプルな「タスク管理（Todo）アプリ」のコード（HTML/CSS/JavaScript、またはReact）を生成してください。\n\n# アプリの仕様\n1. タスクの追加・編集・削除・完了フラグの切り替えができること。\n2. 各タスクには「タイトル」「詳細」「期限（日付）」を設定できること。\n3. 期限が今日を過ぎているタスクは、一目でわかるように背景色や文字色を警告色（赤系）に変更すること。\n4. データの永続化として、ブラウザの「LocalStorage」を保存先として使用すること（リロードしても消えないこと）。\n5. 見た目はモダンで清潔感のあるデザイン（Tailwind CSS等のモダンなスタイル、または美しいCSS）にすること。\n\n# 出力フォーマット\nコードは1つのファイル（またはコンポーネント単位）で完結させ、動作させるための手順もあわせて記載してください。",
+  "domains": {
+    "design": {
+      "summary": "Task management app UI/UX design specification with responsive layout and defined design tokens.",
+      "confidence_score": 85,
+      "metadata": {
+        "target_platform": "web",
+        "sketch_count": 3,
+        "selected_sketch": "/home/runner/work/multi-ai-coding/multi-ai-coding/data/sketches/design-e4c67380/sketch_1.png",
+        "selected_label": "案1"
+      }
+    },
+    "software": {
+      "summary": "MVP implementation of a Todo app using Vanilla JavaScript and Tailwind CSS in a single HTML file.",
+      "confidence_score": 85,
+      "metadata": {}
+    }
+  },
+  "bom": []
+}

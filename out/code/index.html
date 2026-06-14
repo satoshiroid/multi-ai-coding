@@ -1,0 +1,113 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Todo App</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .completed { text-decoration: line-through; opacity: 0.5; }
+    </style>
+</head>
+<body class="bg-gray-100 p-4">
+    <div class="max-w-md mx-auto bg-white p-4 rounded shadow">
+        <h1 class="text-2xl font-bold mb-4">Todo App</h1>
+        <form id="taskForm" class="mb-4">
+            <input type="text" id="title" placeholder="Task Title" class="border p-2 w-full mb-2" required>
+            <input type="text" id="detail" placeholder="Task Details" class="border p-2 w-full mb-2">
+            <input type="date" id="dueDate" class="border p-2 w-full mb-2">
+            <button type="submit" class="bg-blue-500 text-white p-2 rounded">Add Task</button>
+        </form>
+        <div class="mb-4">
+            <button onclick="filterTasks('all')" class="mr-2">All</button>
+            <button onclick="filterTasks('active')" class="mr-2">Active</button>
+            <button onclick="filterTasks('completed')" class="mr-2">Completed</button>
+            <button onclick="filterTasks('overdue')">Overdue</button>
+        </div>
+        <button onclick="sortTasks()" class="mb-4">Sort by Due Date</button>
+        <ul id="taskList"></ul>
+    </div>
+    <script>
+        const taskList = document.getElementById('taskList');
+        let tasks = JSON.parse(localStorage.getItem('todo_app_tasks')) || [];
+        let filter = 'all';
+
+        document.getElementById('taskForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const title = document.getElementById('title').value;
+            const detail = document.getElementById('detail').value;
+            const dueDate = document.getElementById('dueDate').value;
+            const newTask = {
+                id: Date.now() + Math.random(),
+                title,
+                detail,
+                dueDate,
+                completed: false,
+                createdAt: Date.now()
+            };
+            tasks.push(newTask);
+            saveTasks();
+            renderTasks();
+            this.reset();
+        });
+
+        function renderTasks() {
+            taskList.innerHTML = '';
+            const filteredTasks = tasks.filter(task => {
+                if (filter === 'active') return !task.completed;
+                if (filter === 'completed') return task.completed;
+                if (filter === 'overdue') return !task.completed && task.dueDate < new Date().toISOString().split('T')[0];
+                return true;
+            });
+            filteredTasks.sort((a, b) => filter === 'all' ? b.createdAt - a.createdAt : new Date(a.dueDate) - new Date(b.dueDate));
+            filteredTasks.forEach(task => {
+                const taskItem = document.createElement('li');
+                taskItem.className = `p-2 border-b flex justify-between ${task.completed ? 'completed' : ''}`;
+                if (task.dueDate < new Date().toISOString().split('T')[0] && !task.completed) {
+                    taskItem.classList.add('bg-red-50', 'border-red-300');
+                }
+                taskItem.innerHTML = `
+                    <div>
+                        <input type="checkbox" ${task.completed ? 'checked' : ''} onclick="toggleComplete(${task.id})">
+                        <span>${task.title}</span>
+                        <span class="text-sm text-gray-500">${task.detail}</span>
+                        <span class="text-sm ${task.dueDate < new Date().toISOString().split('T')[0] && !task.completed ? 'text-red-500' : 'text-gray-500'}">${task.dueDate}</span>
+                    </div>
+                    <button onclick="deleteTask(${task.id})" class="text-red-500">Delete</button>
+                `;
+                taskList.appendChild(taskItem);
+            });
+        }
+
+        function toggleComplete(id) {
+            const task = tasks.find(t => t.id === id);
+            task.completed = !task.completed;
+            saveTasks();
+            renderTasks();
+        }
+
+        function deleteTask(id) {
+            tasks = tasks.filter(t => t.id !== id);
+            saveTasks();
+            renderTasks();
+        }
+
+        function saveTasks() {
+            localStorage.setItem('todo_app_tasks', JSON.stringify(tasks));
+        }
+
+        function filterTasks(type) {
+            filter = type;
+            renderTasks();
+        }
+
+        function sortTasks() {
+            tasks.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+            renderTasks();
+        }
+
+        renderTasks();
+    </script>
+</body>
+</html>
