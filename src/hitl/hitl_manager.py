@@ -64,6 +64,37 @@ class HitlManager:
         finally:
             self._pending.pop(request.request_id, None)
 
+    async def request_choice(
+        self,
+        thread_id: str,
+        request: HitlRequest,
+        options: list[str],
+        image_paths: list[str] | None = None,
+    ) -> HitlResponse:
+        """Like :meth:`request` but the owner picks one of ``options``.
+
+        Used for proposal-style escalations and image-based design selection: the
+        chosen option text comes back in the response's ``feedback``. CLI resolves
+        inline; Discord parks a future that a button callback fulfils via
+        :meth:`resolve`.
+        """
+        if isinstance(self._channel, CliChannel):
+            await self._channel.push_choice(thread_id, request, options, image_paths)
+            return await self._channel.prompt_choice(request, options)
+
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future[HitlResponse] = loop.create_future()
+        self._pending[request.request_id] = fut
+        try:
+            await self._channel.push_choice(thread_id, request, options, image_paths)
+            return await asyncio.wait_for(fut, self._timeout)
+        except asyncio.TimeoutError:
+            return HitlResponse(
+                request_id=request.request_id, decision=HitlDecision.TIMEOUT
+            )
+        finally:
+            self._pending.pop(request.request_id, None)
+
     def resolve(self, response: HitlResponse) -> bool:
         """Fulfil a pending gate, typically from a Discord button callback.
 

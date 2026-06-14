@@ -11,6 +11,7 @@ so a gate can block for days (Discord) without busy-looping.
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from typing import Any
 
@@ -141,6 +142,7 @@ class PMOrchestrator:
         self._persist(state)
         archive_label = "アプリ成果物" if state.project_type == "app" else "製造データ"
         await self._progress(state, f"✅ プロジェクト完了。{archive_label}をアーカイブしました。")
+        await self._post_deliverables(state)
         return state
 
     # ------------------------------------------------------------------ #
@@ -219,9 +221,15 @@ class PMOrchestrator:
 
         if advice.get("escalate_to_owner"):
             reason = advice.get("reason", "L2が解決できませんでした。")
+            proposals = advice.get("proposals") or []
+            options = [
+                f"{p.get('label', '案')}: {p.get('action', '')}".strip(": ").strip()
+                for p in proposals
+                if isinstance(p, dict) and (p.get("label") or p.get("action"))
+            ]
             await self._progress(
                 state,
-                f"🔺 L2判断: オーナー判断が必要\n　理由: {reason[:200]}",
+                f"🔺 L2判断: オーナー判断が必要（対応案 {len(options)} 件を提示）\n　理由: {reason[:200]}",
             )
             req = HitlRequest(
                 request_id=f"esc-{uuid.uuid4().hex[:8]}",
@@ -230,7 +238,13 @@ class PMOrchestrator:
                 title=f"エスカレーション: {task.domain.value}",
                 body=reason,
             )
-            response = await self.hitl.request(state.thread_id or state.project_id, req)
+            # Proposal-style escalation: owner picks a concrete remediation.
+            if options:
+                response = await self.hitl.request_choice(
+                    state.thread_id or state.project_id, req, options
+                )
+            else:
+                response = await self.hitl.request(state.thread_id or state.project_id, req)
             feedback = response.feedback or advice.get("guidance", "")
         else:
             guidance = advice.get("guidance", "")
@@ -273,15 +287,42 @@ class PMOrchestrator:
             return stage.index + 1
 
         issues = "; ".join(report.issues)
-        await self._progress(state, f"❌ 干渉検出: {issues} → 再設計へ差し戻し")
-        # Loop back to the engineering stage with the issue as feedback.
+        await self._progress(state, f"❌ 干渉検出: {issues}")
+
+        # Proposal-style escalation: the owner picks the concrete remediation
+        # rather than the system silently looping back.
+        options = [
+            "筐体を拡大: メカ設計に内寸を「基板外形＋クリアランス」以上へ拡大させる",
+            "基板を縮小: 回路設計に基板外形を「筐体内寸−クリアランス」以下へ縮小させる",
+            "現状を許容: 干渉を承知で次工程へ進める（製造前に要手修正）",
+        ]
+        req = HitlRequest(
+            request_id=f"esc-consistency-{uuid.uuid4().hex[:6]}",
+            project_id=state.project_id,
+            gate="escalation_consistency",
+            title="エスカレーション: 筐体↔基板の干渉",
+            body=f"整合性チェックで干渉を検出しました。\n\n# 検出内容\n{issues}\n\n対応案をお選びください。",
+        )
+        response = await self.hitl.request_choice(
+            state.thread_id or state.project_id, req, options
+        )
+        chosen = response.feedback or options[0]
+
+        if chosen.startswith("現状を許容") or response.decision == HitlDecision.TIMEOUT:
+            await self._progress(state, "▶️ オーナー選択: 現状許容で次工程へ（干渉は残存）")
+            return stage.index + 1
+
+        # Re-run engineering with the owner-chosen remediation as feedback.
+        await self._progress(state, f"🔧 オーナー選択: {chosen[:120]} → 再設計")
         back = stage.on_reject_to or (stage.index - 1)
         back_stage = get_stage(back, self._active_pipeline)
         await self._run_workers(
-            back_stage, state, plan={}, feedback=f"整合性エラーを修正してください: {issues}"
+            back_stage,
+            state,
+            plan={},
+            feedback=f"整合性エラー対応（オーナー指示: {chosen}）。詳細: {issues}",
         )
-        # Re-check once after the corrective re-run, then proceed regardless to
-        # avoid infinite loops (the owner gate will catch residual issues).
+        # Proceed after the corrective re-run; residual issues surface at the gate.
         return stage.index + 1
 
     # ------------------------------------------------------------------ #
@@ -291,6 +332,14 @@ class PMOrchestrator:
         """Pause for owner approval; route on the decision."""
         state.status = StageStatus.WAITING_HITL
         self._persist(state)
+
+        # Design gate: when sketch proposals exist, approve by *selecting* one.
+        sketches = self._collect_sketches(state)
+        if stage.gate == "design_approval" and len(sketches) >= 2:
+            nxt = await self._run_design_selection(stage, state, sketches)
+            state.status = StageStatus.RUNNING
+            self._persist(state)
+            return nxt
 
         req = self._build_gate_request(stage, state)
         response = await self.hitl.request(state.thread_id or state.project_id, req)
@@ -322,6 +371,50 @@ class PMOrchestrator:
                 )
             return stage.index  # re-present the same gate
 
+        return stage.index + 1
+
+    @staticmethod
+    def _collect_sketches(state: ProjectState) -> list[str]:
+        """Sketch image paths produced by the design worker, in order."""
+        design = state.results.get(Domain.DESIGN.value)
+        if design is None:
+            return []
+        items = sorted(
+            (k, v)
+            for k, v in (design.artifacts or {}).items()
+            if isinstance(v, str) and k.startswith("sketch_image") and v.endswith(".png")
+        )
+        return [v for _, v in items]
+
+    async def _run_design_selection(
+        self, stage: Stage, state: ProjectState, sketches: list[str]
+    ) -> int | None:
+        """Image-based design approval: owner selects a sketch or regenerates."""
+        options = [f"案{i}" for i in range(1, len(sketches) + 1)] + ["やり直し（別案を再生成）"]
+        req = self._build_gate_request(stage, state)
+        response = await self.hitl.request_choice(
+            state.thread_id or state.project_id, req, options, image_paths=sketches
+        )
+        chosen = response.feedback or options[0]
+
+        if chosen.startswith("やり直し") or response.decision == HitlDecision.TIMEOUT:
+            await self._progress(state, "🔄 別の方向性でデザイン案を再生成します")
+            back = stage.on_reject_to or (stage.index - 1)
+            await self._run_workers(
+                get_stage(back, self._active_pipeline),
+                state,
+                plan={},
+                feedback="別の方向性で、改めて異なるデザイン案を出してください。",
+            )
+            return stage.index  # re-present the selection gate
+
+        idx = options.index(chosen) if chosen in options else 0
+        await self._progress(state, f"👍 デザイン案 {chosen} を選択しました")
+        design = state.results.get(Domain.DESIGN.value)
+        if design is not None and idx < len(sketches):
+            design.metadata["selected_sketch"] = sketches[idx]
+            design.metadata["selected_label"] = chosen
+            self._persist(state)
         return stage.index + 1
 
     def _build_gate_request(self, stage: Stage, state: ProjectState) -> HitlRequest:
@@ -358,6 +451,37 @@ class PMOrchestrator:
             await self.hitl.channel.push_progress(
                 state.thread_id or state.project_id, message
             )
+
+    async def _post_deliverables(self, state: ProjectState) -> None:
+        """Post the finished deliverables to the channel (mobile-readable inline).
+
+        Renders each domain's summary + artifacts (code files for apps, specs for
+        hardware) and the BOM as chunked messages so the owner can review the full
+        output on a phone without opening files.
+        """
+        thread = state.thread_id or state.project_id
+        label = "アプリ成果物" if state.project_type == "app" else "製造データ"
+        await self.hitl.channel.push_progress(thread, f"📦 {label} ({state.project_id})")
+
+        for domain, result in state.results.items():
+            lines = [f"■ {domain} (信頼度 {result.confidence_score})", result.summary or ""]
+            for key, val in (result.artifacts or {}).items():
+                if isinstance(val, str) and (key.startswith("render_image") or val.endswith(".png")):
+                    continue  # images were already shown at the gate
+                if key == "files" and isinstance(val, dict):
+                    for path, code in val.items():
+                        lines.append(f"\n――― {path} ―――\n{code}")
+                    continue
+                rendered = val if isinstance(val, str) else json.dumps(val, ensure_ascii=False, indent=2)
+                lines.append(f"\n[{key}]\n{rendered}")
+            await self.hitl.channel.push_progress(thread, "\n".join(lines))
+
+        if state.bom:
+            bom_lines = ["🧾 BOM"] + [
+                f"- {b.domain.value} {b.part_number} x{b.quantity} @ {b.unit_cost} = {b.line_cost} ({b.description})"
+                for b in state.bom
+            ]
+            await self.hitl.channel.push_progress(thread, "\n".join(bom_lines))
 
     def _persist(self, state: ProjectState) -> None:
         if self.state_store is not None:

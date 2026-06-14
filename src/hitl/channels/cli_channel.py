@@ -80,6 +80,45 @@ class CliChannel(BaseChannel):
         """Render a progress update to stdout."""
         _emit(f"[{thread_id}] {message}")
 
+    async def push_choice(
+        self,
+        thread_id: str,
+        request: HitlRequest,
+        options: list[str],
+        image_paths: list[str] | None = None,
+    ) -> None:
+        """Render a proposal-style escalation with numbered options."""
+        _emit(f"\n[{thread_id}] 🔺 {request.title}")
+        _emit(request.body)
+        if image_paths:
+            _emit("Images: " + ", ".join(image_paths))
+        for i, opt in enumerate(options, start=1):
+            _emit(f"  [{i}] {opt}")
+
+    async def prompt_choice(
+        self, request: HitlRequest, options: list[str]
+    ) -> HitlResponse:
+        """Collect the owner's proposal choice (auto-picks the first under auto-approve)."""
+        if self.auto_approve or not options:
+            return HitlResponse(
+                request_id=request.request_id,
+                decision=HitlDecision.APPROVE,
+                feedback=(options[0] if options else None),
+            )
+        while True:
+            raw = await asyncio.to_thread(input, f"対応案を選択 [1-{len(options)}]: ")
+            try:
+                idx = int(raw.strip()) - 1
+            except ValueError:
+                idx = -1
+            if 0 <= idx < len(options):
+                return HitlResponse(
+                    request_id=request.request_id,
+                    decision=HitlDecision.APPROVE,
+                    feedback=options[idx],
+                )
+            _emit(f"1〜{len(options)} の番号で選択してください")
+
     async def prompt_decision(self, request: HitlRequest) -> HitlResponse:
         """Collect the owner's decision from the terminal.
 

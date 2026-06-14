@@ -31,7 +31,9 @@ class SeniorAgent(BaseAgent):
         """
         schema_hint = (
             '{"resolved": bool, "guidance": str, '
-            '"escalate_to_owner": bool, "reason": str}'
+            '"escalate_to_owner": bool, "reason": str, '
+            '"proposals": [{"label": str (short option name), '
+            '"action": str (concrete instruction the worker follows if chosen)}]}'
         )
 
         # Surface the worker's artifacts/metadata so the senior reviews evidence,
@@ -49,7 +51,10 @@ class SeniorAgent(BaseAgent):
             "Diagnose why confidence is low and decide the next step. If you can "
             "unblock the worker, set 'resolved' true and put concrete, actionable "
             "'guidance' for a re-run. If the blocker requires an owner decision "
-            "(scope, budget, missing requirement), set 'escalate_to_owner' true "
-            "and explain why in 'reason'."
+            "(scope, budget, missing requirement), set 'escalate_to_owner' true, "
+            "explain why in 'reason', and ALWAYS provide 2-4 distinct, concrete "
+            "'proposals' the owner can choose between — each with a short 'label' "
+            "and a precise 'action' the worker will execute if selected (not vague "
+            "advice). Make the trade-offs between proposals clear in 'reason'."
         )
         return await self.run_structured(prompt, schema_hint=schema_hint)

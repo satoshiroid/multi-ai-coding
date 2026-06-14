@@ -68,48 +68,73 @@ class DiscordChannel(BaseChannel):
         return str(thread.id)
 
     async def push_approval(self, thread_id: str, request: HitlRequest) -> None:
-        """Render artifacts + approve/revise/reject controls for the owner."""
+        """Post the full proposal inline, then the approve/revise/reject controls.
+
+        A single Discord message caps at 2000 UTF-16 units and mobile clients
+        can't open ``.md`` attachments, so the full body/BOM is sent as chunked
+        plain messages (mobile-readable) rather than a truncated embed or a file.
+        Render images (PNG) are attached on the final controls message.
+        """
         thread = await self._fetch_thread(thread_id)
 
-        # Discord embed: description ≤ 4096 chars, total size ≤ 6000 chars.
-        body = request.body
-        if len(body) > 3800:
-            body = body[:3800] + "\n…(省略)"
-        embed = discord.Embed(title=request.title[:256], description=body)
+        await self._send_chunked(thread, f"📋 **{request.title}**\n\n{request.body or '(なし)'}")
         if request.total_cost is not None:
-            embed.add_field(name="Total cost", value=str(request.total_cost)[:1024], inline=False)
+            await thread.send(f"💰 総コスト: {request.total_cost}")
         if request.bom:
-            bom_text = self._format_bom(request)[:1000]
-            embed.add_field(name="BOM", value=bom_text, inline=False)
+            await self._send_chunked(thread, "🧾 BOM:\n" + self._format_bom(request))
 
         files = self._collect_files(request.image_paths)
         view = _ApprovalView(request.request_id, self._owner_user_id, self._hitl)
-        await thread.send(embed=embed, files=files, view=view)
+        await thread.send(
+            content="⬇️ 上記の内容でご判断ください（✅承認 / ✏️修正 / ❌却下）",
+            files=files,
+            view=view,
+        )
 
     async def push_escalation(
         self, thread_id: str, title: str, body: str, options: list[str]
     ) -> None:
         """Present an escalation choice as one button per option string."""
         thread = await self._fetch_thread(thread_id)
-        if len(body) > 3800:
-            body = body[:3800] + "\n…(省略)"
-        embed = discord.Embed(title=title[:256], description=body)
+        await self._send_chunked(thread, f"⚠️ **{title}**\n\n{body or ''}")
         view = _EscalationView(options)
-        await thread.send(embed=embed, view=view)
+        await thread.send(content="対応を選択してください", view=view)
 
     async def push_progress(self, thread_id: str, message: str) -> None:
-        """Post a plain-text progress update to the thread.
-
-        Discord counts characters as UTF-16 code units (emoji = 2 units each),
-        so we split by UTF-16 length rather than Python str length.
-        """
+        """Post a plain-text progress update to the thread (chunked if long)."""
         thread = await self._fetch_thread(thread_id)
-        # 1800 UTF-16 units gives comfortable headroom under Discord's 2000-unit limit.
-        limit_utf16 = 1800
+        await self._send_chunked(thread, message or " ")
+
+    async def push_choice(
+        self,
+        thread_id: str,
+        request: HitlRequest,
+        options: list[str],
+        image_paths: list[str] | None = None,
+    ) -> None:
+        """Proposal/selection gate: full text + optional images inline + buttons."""
+        thread = await self._fetch_thread(thread_id)
+        await self._send_chunked(
+            thread, f"🔺 **{request.title}**（お選びください）\n\n{request.body or ''}"
+        )
+        files = self._collect_files(image_paths or [])
+        if files:
+            await thread.send(content="🖼️ 案：", files=files)
+        view = _ChoiceView(request.request_id, self._owner_user_id, self._hitl, options)
+        await thread.send(content="⬇️ 選択：", view=view)
+
+    async def _send_chunked(self, thread: discord.Thread, text: str) -> None:
+        """Send ``text`` as one or more messages under Discord's per-message cap."""
+        for chunk in self._chunk_utf16(text or " "):
+            await thread.send(chunk)
+
+    @staticmethod
+    def _chunk_utf16(text: str, limit_utf16: int = 1800) -> list[str]:
+        """Split by UTF-16 code units (Discord counts emoji as 2) under the 2000 cap."""
         chunks: list[str] = []
         current: list[str] = []
         current_len = 0
-        for char in message or " ":
+        for char in text:
             char_len = len(char.encode("utf-16-le")) // 2
             if current_len + char_len > limit_utf16:
                 chunks.append("".join(current))
@@ -120,8 +145,7 @@ class DiscordChannel(BaseChannel):
                 current_len += char_len
         if current:
             chunks.append("".join(current))
-        for chunk in chunks:
-            await thread.send(chunk)
+        return chunks or [" "]
 
     # ------------------------------------------------------------------ #
     # helpers
@@ -258,6 +282,54 @@ class _ReviseModal(discord.ui.Modal, title="修正内容"):
             )
         await interaction.response.send_message("修正を受け付けました")
         self._view.stop()
+
+
+class _ChoiceView(discord.ui.View):
+    """One button per proposal; the owner's pick resolves the manager future."""
+
+    def __init__(
+        self,
+        request_id: str,
+        owner_user_id: int,
+        hitl_manager: object | None,
+        options: list[str],
+    ) -> None:
+        super().__init__(timeout=None)
+        for option in options[:5]:  # keep the gate scannable on mobile
+            self.add_item(_ChoiceButton(request_id, owner_user_id, hitl_manager, option))
+
+
+class _ChoiceButton(discord.ui.Button):
+    """A single remediation proposal; resolves the gate with its full text."""
+
+    def __init__(
+        self,
+        request_id: str,
+        owner_user_id: int,
+        hitl_manager: object | None,
+        option: str,
+    ) -> None:
+        super().__init__(label=option[:80] or "選択", style=discord.ButtonStyle.primary)
+        self._request_id = request_id
+        self._owner_user_id = owner_user_id
+        self._hitl = hitl_manager
+        self._option = option
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self._owner_user_id:
+            await interaction.response.send_message("オーナーのみ操作できます", ephemeral=True)
+            return
+        if self._hitl is not None:
+            self._hitl.resolve(
+                HitlResponse(
+                    request_id=self._request_id,
+                    decision=HitlDecision.APPROVE,
+                    feedback=self._option,
+                )
+            )
+        await interaction.response.send_message(f"選択: {self._option[:180]}")
+        if self.view is not None:
+            self.view.stop()
 
 
 class _EscalationView(discord.ui.View):
