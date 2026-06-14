@@ -1,0 +1,172 @@
+# =========================================================================
+# Multi-AI Coding — pipeline execution on GitHub Actions.
+#
+# Intake (Discord bot) fires a `repository_dispatch` carrying the requirement
+# and the project_type decided by the channel (#hardware / #app). This workflow
+# routes the build to the right runner, runs the pipeline head-to-tail with the
+# type pinned (no LLM classification), exports the result, and opens a PR.
+#
+#   app      → ubuntu-latest        (hosted; software-only, no CAD)
+#   hardware → [self-hosted, macOS] (the Mac with Blender/FreeCAD/KiCAD + MCP)
+#
+# The PR review IS the human approval gate (internal HITL gates auto-approve).
+# =========================================================================
+name: build
+
+on:
+  repository_dispatch:
+    types: [new-project]
+  workflow_dispatch:
+    inputs:
+      requirement:
+        description: "製品/アプリの要件（自然言語）"
+        required: true
+        type: string
+      project_type:
+        description: "種別"
+        required: true
+        type: choice
+        options: [app, hardware]
+      thread_id:
+        description: "Discord スレッドID（通知用・任意）"
+        required: false
+        type: string
+
+jobs:
+  # ----------------------------------------------------------------------- #
+  # Normalize both trigger shapes into a single set of outputs and decide the
+  # runner from project_type. Always runs on a cheap hosted runner.
+  # ----------------------------------------------------------------------- #
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      runner: ${{ steps.route.outputs.runner }}
+      project_type: ${{ steps.route.outputs.project_type }}
+      requirement: ${{ steps.route.outputs.requirement }}
+      thread_id: ${{ steps.route.outputs.thread_id }}
+    steps:
+      - id: route
+        # All user-controlled values come in via env (never inlined into the
+        # script body) so a crafted requirement can't inject shell.
+        env:
+          EVENT: ${{ github.event_name }}
+          RD_TYPE: ${{ github.event.client_payload.project_type }}
+          RD_REQ: ${{ github.event.client_payload.requirement }}
+          RD_THREAD: ${{ github.event.client_payload.thread_id }}
+          WD_TYPE: ${{ github.event.inputs.project_type }}
+          WD_REQ: ${{ github.event.inputs.requirement }}
+          WD_THREAD: ${{ github.event.inputs.thread_id }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "repository_dispatch" ]; then
+            TYPE="$RD_TYPE"; REQ="$RD_REQ"; THREAD="$RD_THREAD"
+          else
+            TYPE="$WD_TYPE"; REQ="$WD_REQ"; THREAD="$WD_THREAD"
+          fi
+          TYPE="$(printf '%s' "$TYPE" | tr '[:upper:]' '[:lower:]')"
+          if [ "$TYPE" != "app" ] && [ "$TYPE" != "hardware" ]; then
+            echo "::error::invalid project_type: '$TYPE' (expected app|hardware)"
+            exit 1
+          fi
+          if [ "$TYPE" = "hardware" ]; then
+            RUNNER='["self-hosted","macOS"]'
+          else
+            RUNNER='"ubuntu-latest"'
+          fi
+          {
+            echo "runner=$RUNNER"
+            echo "project_type=$TYPE"
+            echo "thread_id=$THREAD"
+          } >> "$GITHUB_OUTPUT"
+          # requirement may contain spaces/newlines → heredoc-form output.
+          {
+            echo "requirement<<__REQ_EOF__"
+            printf '%s\n' "$REQ"
+            echo "__REQ_EOF__"
+          } >> "$GITHUB_OUTPUT"
+
+  # ----------------------------------------------------------------------- #
+  # Run the pipeline on the routed runner, export results, open a PR.
+  # ----------------------------------------------------------------------- #
+  build:
+    needs: setup
+    runs-on: ${{ fromJSON(needs.setup.outputs.runner) }}
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run pipeline
+        env:
+          # Type + requirement via env (no shell injection from user input).
+          PROJECT_TYPE: ${{ needs.setup.outputs.project_type }}
+          REQUIREMENT: ${{ needs.setup.outputs.requirement }}
+          # LLM credentials — managed entirely in GitHub Secrets.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OLLAMA_BASE_URL: ${{ secrets.OLLAMA_BASE_URL }}
+          # Keep CI state out of the repo working tree.
+          STATE_DB_PATH: ${{ runner.temp }}/state.db
+        run: |
+          python examples/run_pipeline.py \
+            --auto-approve \
+            --project-type "$PROJECT_TYPE" \
+            --export ./out \
+            "$REQUIREMENT"
+
+      - name: Open pull request
+        id: cpr
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: project/${{ needs.setup.outputs.project_type }}-${{ github.run_id }}
+          base: main
+          add-paths: out/**
+          commit-message: "feat(${{ needs.setup.outputs.project_type }}): pipeline output (run ${{ github.run_id }})"
+          title: "[${{ needs.setup.outputs.project_type }}] 自動生成成果物 (run ${{ github.run_id }})"
+          body: |
+            自動パイプラインの成果物です。レビュー＝最終承認ゲートです。
+
+            - 種別: `${{ needs.setup.outputs.project_type }}`
+            - ランナー: `${{ needs.setup.outputs.runner }}`
+            - 成果物: `out/`（`PROJECT.md` / `summary.json` ほか）
+
+            マージで承認、クローズで却下。
+
+      - name: Notify Discord thread
+        if: ${{ always() }}
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          THREAD_ID: ${{ needs.setup.outputs.thread_id }}
+          PR_URL: ${{ steps.cpr.outputs.pull-request-url }}
+          PROJECT_TYPE: ${{ needs.setup.outputs.project_type }}
+          JOB_STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DISCORD_WEBHOOK_URL:-}" ] || [ -z "${THREAD_ID:-}" ]; then
+            echo "Discord notify skipped (no webhook or thread_id)."
+            exit 0
+          fi
+          if [ "$JOB_STATUS" = "success" ] && [ -n "${PR_URL:-}" ]; then
+            MSG="✅ [$PROJECT_TYPE] 完了。PR: $PR_URL"
+          else
+            MSG="❌ [$PROJECT_TYPE] 失敗 ($JOB_STATUS)。ログ: $RUN_URL"
+          fi
+          # Post into the originating forum thread via ?thread_id=. Build the
+          # JSON with python (always present here) so no jq dependency is needed
+          # on the self-hosted macOS runner.
+          BODY="$(MSG="$MSG" python -c 'import json,os;print(json.dumps({"content":os.environ["MSG"]}))')"
+          curl -sf -H "Content-Type: application/json" \
+            -X POST "${DISCORD_WEBHOOK_URL}?thread_id=${THREAD_ID}" -d "$BODY" \
+            && echo "notified."

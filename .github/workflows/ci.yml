@@ -1,0 +1,47 @@
+# =========================================================================
+# CI — logic-level "full test" that runs on every push / PR.
+#
+# Uses the deterministic mock stack (MockProvider + mock MCP transport), so it
+# needs NO API keys, NO CAD, NO Discord. This is the cloud-runnable half of the
+# pipeline's full test: it validates orchestration, tier routing, consistency
+# checks, BOM, state persistence and the app/hardware split end-to-end.
+#
+# The real-CAD full test is desktop-bound and runs via build.yml on the
+# self-hosted macOS runner, not here.
+# =========================================================================
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Unit + mock E2E tests
+        run: pytest tests/ -q
+
+      - name: Mock pipeline — app
+        run: |
+          python examples/run_pipeline.py --mock --auto-approve \
+            --project-type app --export ./out_app "メモ管理アプリを作りたい"
+
+      - name: Mock pipeline — hardware
+        run: |
+          python examples/run_pipeline.py --mock --auto-approve \
+            --project-type hardware --export ./out_hw "Wi-Fi環境モニターを作りたい"
