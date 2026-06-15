@@ -44,7 +44,9 @@ _CODE_SCHEMA_HINT = (
     '"artifacts": {"files": {"relative/path.ext": "file content (code)"}, '
     '"setup": str (brief setup/run instructions)}, '
     '"metadata": object} '
-    '— keep total code under ~200 lines so the JSON is never truncated'
+    '— implement the requested core feature for real (no placeholder); prefer a '
+    'self-contained index.html. Keep total code under ~400 lines so the JSON is '
+    'never truncated.'
 )
 
 
