@@ -176,16 +176,6 @@ jobs:
         if: ${{ needs.setup.outputs.project_type == 'app' }}
         run: python scripts/validate_generated.py ./out/code ./out/VALIDATION.md
 
-      - name: Deploy app to GitHub Pages
-        if: ${{ needs.setup.outputs.project_type == 'app' }}
-        uses: JamesIves/github-pages-deploy-action@v4
-        with:
-          branch: gh-pages
-          folder: out/code
-          target-folder: ${{ github.run_id }}
-          clean: false                       # keep other projects' folders
-          commit-message: "deploy app ${{ github.run_id }}"
-
       - name: Open pull request
         id: cpr
         uses: peter-evans/create-pull-request@v6
@@ -231,8 +221,35 @@ jobs:
           fi
           # Post into the originating forum thread via ?thread_id=. Build the
           # JSON with python (always present here) so no jq dependency is needed
-          # on the self-hosted macOS runner.
+          # on the self-hosted macOS runner. Notify is best-effort: a non-2xx
+          # (e.g. webhook/thread mismatch) must NOT fail the build.
           BODY="$(MSG="$MSG" python -c 'import json,os;print(json.dumps({"content":os.environ["MSG"]}))')"
-          curl -sf -H "Content-Type: application/json" \
-            -X POST "${DISCORD_WEBHOOK_URL}?thread_id=${THREAD_ID}" -d "$BODY" \
-            && echo "notified."
+          code=$(curl -s -o /tmp/wh.txt -w "%{http_code}" -H "Content-Type: application/json" \
+            -X POST "${DISCORD_WEBHOOK_URL}?thread_id=${THREAD_ID}" -d "$BODY" || echo "000")
+          echo "discord notify HTTP $code"
+          if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+            echo "::warning::Discord notify failed ($code): $(cat /tmp/wh.txt 2>/dev/null | head -c 200)"
+          fi
+
+  # ----------------------------------------------------------------------- #
+  # Publish the app to GitHub Pages in an isolated job — its own checkout/git
+  # state so the Pages push can't interfere with PR creation in `build`.
+  # ----------------------------------------------------------------------- #
+  deploy:
+    needs: [setup, build]
+    if: ${{ needs.setup.outputs.project_type == 'app' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: project/app-${{ github.run_id }}   # the PR branch (has out/code)
+      - name: Deploy to GitHub Pages
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          branch: gh-pages
+          folder: out/code
+          target-folder: ${{ github.run_id }}
+          clean: false                            # keep other projects' folders
+          commit-message: "deploy app ${{ github.run_id }}"
