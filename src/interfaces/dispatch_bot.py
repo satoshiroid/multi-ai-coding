@@ -34,16 +34,22 @@ def resolve_project_type(parent_channel_id: int, channel_map: dict[int, str]) ->
     return channel_map.get(parent_channel_id)
 
 
-# Leading slash-prefixes that declare the project type in a post (tolerant of
-# the owner's common typos). Checked before the channel mapping.
+# Leading prefixes that declare the project type in a post. The slash is
+# optional (owners often drop it) and common typos are tolerated. Checked
+# before the channel mapping. Bare ASCII keywords require a trailing separator
+# so e.g. "apple…" doesn't match "app".
 _TYPE_PREFIXES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("app", ("/app", "/application", "/アプリ")),
-    ("hardware", ("/hardware", "/hardwere", "/hw", "/ハード")),
+    ("app", ("/app", "/application", "/アプリ", "app ", "app:", "application ", "アプリ")),
+    (
+        "hardware",
+        ("/hardware", "/hardwere", "/hw", "/ハード",
+         "hardware ", "hardwere ", "hw ", "ハード"),
+    ),
 )
 
 
 def infer_type_from_text(text: str) -> tuple[str | None, str]:
-    """Detect a leading /app or /hardware prefix; return (type|None, stripped).
+    """Detect a leading app/hardware prefix (slash optional); return (type|None, stripped).
 
     The prefix wins over the channel mapping so a single forum channel can carry
     both project types. Returns the original text unchanged when no prefix.
@@ -53,7 +59,7 @@ def infer_type_from_text(text: str) -> tuple[str | None, str]:
     for ptype, prefixes in _TYPE_PREFIXES:
         for p in prefixes:
             if low.startswith(p):
-                return ptype, stripped[len(p):].lstrip()
+                return ptype, stripped[len(p):].lstrip(" :　")
     return None, text
 
 
