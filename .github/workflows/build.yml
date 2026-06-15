@@ -176,6 +176,16 @@ jobs:
         if: ${{ needs.setup.outputs.project_type == 'app' }}
         run: python scripts/validate_generated.py ./out/code ./out/VALIDATION.md
 
+      - name: Deploy app to GitHub Pages
+        if: ${{ needs.setup.outputs.project_type == 'app' }}
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          branch: gh-pages
+          folder: out/code
+          target-folder: ${{ github.run_id }}
+          clean: false                       # keep other projects' folders
+          commit-message: "deploy app ${{ github.run_id }}"
+
       - name: Open pull request
         id: cpr
         uses: peter-evans/create-pull-request@v6
@@ -190,7 +200,8 @@ jobs:
 
             - 種別: `${{ needs.setup.outputs.project_type }}`
             - ランナー: `${{ needs.setup.outputs.runner }}`
-            - 成果物: `out/`（`PROJECT.md` / `summary.json` ほか）
+            - 成果物: `out/`（`PROJECT.md` / `summary.json` / `VALIDATION.md` ほか）
+            - 公開URL: ${{ needs.setup.outputs.project_type == 'app' && format('https://{0}.github.io/{1}/{2}/', github.repository_owner, github.event.repository.name, github.run_id) || '（appのみ）' }}
 
             マージで承認、クローズで却下。
 
@@ -203,6 +214,7 @@ jobs:
           PROJECT_TYPE: ${{ needs.setup.outputs.project_type }}
           JOB_STATUS: ${{ job.status }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PAGE_URL: ${{ needs.setup.outputs.project_type == 'app' && format('https://{0}.github.io/{1}/{2}/', github.repository_owner, github.event.repository.name, github.run_id) || '' }}
         run: |
           set -euo pipefail
           if [ -z "${DISCORD_WEBHOOK_URL:-}" ] || [ -z "${THREAD_ID:-}" ]; then
@@ -211,6 +223,9 @@ jobs:
           fi
           if [ "$JOB_STATUS" = "success" ] && [ -n "${PR_URL:-}" ]; then
             MSG="✅ [$PROJECT_TYPE] 完了。PR: $PR_URL"
+            if [ -n "${PAGE_URL:-}" ]; then
+              MSG="$MSG"$'\n'"🌐 公開: $PAGE_URL"
+            fi
           else
             MSG="❌ [$PROJECT_TYPE] 失敗 ($JOB_STATUS)。ログ: $RUN_URL"
           fi
