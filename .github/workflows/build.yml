@@ -214,6 +214,7 @@ jobs:
             - ランナー: `${{ needs.setup.outputs.runner }}`
             - 成果物: `out/`（`PROJECT.md` / `summary.json` / `VALIDATION.md` ほか）
             - 公開URL: ${{ needs.setup.outputs.project_type == 'app' && format('https://{0}.github.io/{1}/{2}/', github.repository_owner, github.event.repository.name, github.run_id) || '（appのみ）' }}
+            - アプリのリポジトリ: ${{ needs.setup.outputs.project_type == 'app' && format('https://github.com/{0}/app-{1}', github.repository_owner, github.run_id) || '（appのみ）' }}
 
             マージで承認、クローズで却下。
 
@@ -227,6 +228,7 @@ jobs:
           JOB_STATUS: ${{ job.status }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           PAGE_URL: ${{ needs.setup.outputs.project_type == 'app' && format('https://{0}.github.io/{1}/{2}/', github.repository_owner, github.event.repository.name, github.run_id) || '' }}
+          REPO_URL: ${{ needs.setup.outputs.project_type == 'app' && format('https://github.com/{0}/app-{1}', github.repository_owner, github.run_id) || '' }}
         run: |
           set -euo pipefail
           if [ -z "${DISCORD_WEBHOOK_URL:-}" ] || [ -z "${THREAD_ID:-}" ]; then
@@ -237,6 +239,9 @@ jobs:
             MSG="✅ [$PROJECT_TYPE] 完了。PR: $PR_URL"
             if [ -n "${PAGE_URL:-}" ]; then
               MSG="$MSG"$'\n'"🌐 公開: $PAGE_URL"
+            fi
+            if [ -n "${REPO_URL:-}" ]; then
+              MSG="$MSG"$'\n'"📦 リポジトリ: $REPO_URL"
             fi
           else
             MSG="❌ [$PROJECT_TYPE] 失敗 ($JOB_STATUS)。ログ: $RUN_URL"
@@ -275,3 +280,27 @@ jobs:
           target-folder: ${{ github.run_id }}
           clean: false                            # keep other projects' folders
           commit-message: "deploy app ${{ github.run_id }}"
+
+      - name: Publish app to its own repository
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          OWNER: ${{ github.repository_owner }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "GH_PAT not set — skipping standalone repo publish"; exit 0
+          fi
+          repo="app-${RUN_ID}"
+          cd out/code
+          git init -q -b main
+          git config user.email "bot@users.noreply.github.com"
+          git config user.name "multi-ai-bot"
+          git add -A
+          git commit -qm "init: generated app (run ${RUN_ID})"
+          if gh repo create "${OWNER}/${repo}" --public --source=. --remote=origin --push \
+               --description "Auto-generated app (run ${RUN_ID})"; then
+            echo "published https://github.com/${OWNER}/${repo}"
+          else
+            echo "::warning::standalone repo publish failed for ${OWNER}/${repo}"
+          fi
