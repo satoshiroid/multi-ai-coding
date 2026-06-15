@@ -172,6 +172,10 @@ jobs:
             --export ./out \
             "$REQUIREMENT"
 
+      - name: Validate generated app
+        if: ${{ needs.setup.outputs.project_type == 'app' }}
+        run: python scripts/validate_generated.py ./out/code ./out/VALIDATION.md
+
       - name: Open pull request
         id: cpr
         uses: peter-evans/create-pull-request@v6
