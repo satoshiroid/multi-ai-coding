@@ -1,0 +1,93 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Task Manager</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .expired { background-color: #FEE2E2; color: #DC2626; }
+    </style>
+</head>
+<body class="bg-gray-100 p-6">
+    <div class="max-w-xl mx-auto bg-white p-4 rounded shadow">
+        <h1 class="text-2xl font-bold mb-4">Task Manager</h1>
+        <form id="task-form" class="mb-4">
+            <input type="text" id="title" placeholder="Task Title" class="border p-2 w-full mb-2" required>
+            <textarea id="detail" placeholder="Task Details" class="border p-2 w-full mb-2"></textarea>
+            <input type="date" id="dueDate" class="border p-2 w-full mb-2">
+            <button type="submit" class="bg-blue-500 text-white p-2 rounded">Add Task</button>
+        </form>
+        <ul id="task-list" class="list-none"></ul>
+    </div>
+    <script>
+        const taskList = document.getElementById('task-list');
+        const taskForm = document.getElementById('task-form');
+        let tasks = JSON.parse(localStorage.getItem('todo_tasks')) || [];
+
+        function saveTasks() {
+            localStorage.setItem('todo_tasks', JSON.stringify(tasks));
+        }
+
+        function renderTasks() {
+            taskList.innerHTML = '';
+            tasks.forEach(task => {
+                const li = document.createElement('li');
+                li.className = `p-2 mb-2 border rounded ${task.completed ? 'line-through text-gray-500' : ''} ${!task.completed && new Date(task.dueDate) < new Date() ? 'expired' : ''}`;
+                li.innerHTML = `
+                    <input type="checkbox" ${task.completed ? 'checked' : ''} onclick="toggleComplete('${task.id}')">
+                    <span contenteditable="true" onblur="editTask('${task.id}', this)">${task.title}</span>
+                    <button onclick="deleteTask('${task.id}')" class="text-red-500 ml-2">Delete</button>
+                    <div class="text-sm">${task.detail}</div>
+                    <div class="text-xs">Due: ${task.dueDate || 'No deadline'}</div>
+                `;
+                taskList.appendChild(li);
+            });
+        }
+
+        function addTask(title, detail, dueDate) {
+            const newTask = {
+                id: Date.now().toString(),
+                title,
+                detail,
+                dueDate,
+                completed: false
+            };
+            tasks.push(newTask);
+            saveTasks();
+            renderTasks();
+        }
+
+        function deleteTask(id) {
+            tasks = tasks.filter(task => task.id !== id);
+            saveTasks();
+            renderTasks();
+        }
+
+        function toggleComplete(id) {
+            const task = tasks.find(task => task.id === id);
+            task.completed = !task.completed;
+            saveTasks();
+            renderTasks();
+        }
+
+        function editTask(id, element) {
+            const task = tasks.find(task => task.id === id);
+            task.title = element.textContent;
+            saveTasks();
+        }
+
+        taskForm.addEventListener('submit', event => {
+            event.preventDefault();
+            const title = document.getElementById('title').value;
+            const detail = document.getElementById('detail').value;
+            const dueDate = document.getElementById('dueDate').value;
+            addTask(title, detail, dueDate);
+            taskForm.reset();
+        });
+
+        renderTasks();
+    </script>
+</body>
+</html>

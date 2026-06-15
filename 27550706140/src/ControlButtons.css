@@ -1,0 +1,27 @@
+.buttons-container {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+
+.btn {
+  padding: 10px 20px;
+  font-size: 16px;
+  border: none;
+  cursor: pointer;
+}
+
+.btn-increment {
+  background-color: blue;
+  color: white;
+}
+
+.btn-decrement {
+  background-color: red;
+  color: white;
+}
+
+.btn-reset {
+  background-color: gray;
+  color: white;
+}
