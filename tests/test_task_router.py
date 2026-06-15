@@ -42,7 +42,7 @@ def test_stage_hint_wins_over_pm_subtask():
     assert len(tasks) == 1
     task = tasks[0]
     # Hint is present → hint is the base, PM subtask appended as context.
-    assert "承認済みアーキテクチャ" in task.instruction  # from instruction_hints
+    assert "index.html" in task.instruction  # from the stage-7 instruction_hints
     assert "PM subtask instruction" in task.instruction   # PM appended
 
 
