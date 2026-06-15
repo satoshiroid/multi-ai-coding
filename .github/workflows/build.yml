@@ -115,6 +115,8 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+    outputs:
+      repo_name: ${{ steps.reponame.outputs.name }}
     steps:
       - uses: actions/checkout@v4
 
@@ -198,6 +200,16 @@ jobs:
         if: ${{ needs.setup.outputs.project_type == 'app' }}
         run: python scripts/validate_generated.py ./out/code ./out/VALIDATION.md
 
+      - name: Compute app repo name
+        id: reponame
+        if: ${{ needs.setup.outputs.project_type == 'app' }}
+        run: |
+          title=$(grep -oiE '<title>[^<]*</title>' out/code/index.html 2>/dev/null | head -1 | sed -E 's#</?title>##gi')
+          slug=$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' | cut -c1-40)
+          [ -z "$slug" ] && slug="app"
+          echo "name=${slug}-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+          echo "repo name -> ${slug}-${{ github.run_id }}"
+
       - name: Open pull request
         id: cpr
         uses: peter-evans/create-pull-request@v6
@@ -214,7 +226,7 @@ jobs:
             - ランナー: `${{ needs.setup.outputs.runner }}`
             - 成果物: `out/`（`PROJECT.md` / `summary.json` / `VALIDATION.md` ほか）
             - 公開URL: ${{ needs.setup.outputs.project_type == 'app' && format('https://{0}.github.io/{1}/{2}/', github.repository_owner, github.event.repository.name, github.run_id) || '（appのみ）' }}
-            - アプリのリポジトリ: ${{ needs.setup.outputs.project_type == 'app' && format('https://github.com/{0}/app-{1}', github.repository_owner, github.run_id) || '（appのみ）' }}
+            - アプリのリポジトリ: ${{ steps.reponame.outputs.name != '' && format('https://github.com/{0}/{1}', github.repository_owner, steps.reponame.outputs.name) || '（appのみ）' }}
 
             マージで承認、クローズで却下。
 
@@ -228,7 +240,7 @@ jobs:
           JOB_STATUS: ${{ job.status }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           PAGE_URL: ${{ needs.setup.outputs.project_type == 'app' && format('https://{0}.github.io/{1}/{2}/', github.repository_owner, github.event.repository.name, github.run_id) || '' }}
-          REPO_URL: ${{ needs.setup.outputs.project_type == 'app' && format('https://github.com/{0}/app-{1}', github.repository_owner, github.run_id) || '' }}
+          REPO_URL: ${{ steps.reponame.outputs.name != '' && format('https://github.com/{0}/{1}', github.repository_owner, steps.reponame.outputs.name) || '' }}
         run: |
           set -euo pipefail
           if [ -z "${DISCORD_WEBHOOK_URL:-}" ] || [ -z "${THREAD_ID:-}" ]; then
@@ -286,12 +298,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_PAT }}
           OWNER: ${{ github.repository_owner }}
           RUN_ID: ${{ github.run_id }}
+          REPO_NAME: ${{ needs.build.outputs.repo_name }}
         run: |
           set -uo pipefail
           if [ -z "${GH_TOKEN:-}" ]; then
             echo "GH_PAT not set — skipping standalone repo publish"; exit 0
           fi
-          repo="app-${RUN_ID}"
+          repo="${REPO_NAME:-app-${RUN_ID}}"
           cd out/code
           git init -q -b main
           git config user.email "bot@users.noreply.github.com"
