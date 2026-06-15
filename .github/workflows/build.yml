@@ -172,6 +172,28 @@ jobs:
             --export ./out \
             "$REQUIREMENT"
 
+      - name: Post design sketches to Discord
+        if: ${{ needs.setup.outputs.project_type == 'app' }}
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          THREAD_ID: ${{ needs.setup.outputs.thread_id }}
+        run: |
+          set -uo pipefail
+          if [ -z "${DISCORD_WEBHOOK_URL:-}" ] || [ -z "${THREAD_ID:-}" ]; then
+            echo "sketch post skipped (no webhook/thread)"; exit 0
+          fi
+          shopt -s nullglob
+          files=(out/renders/sketch_*.png)
+          if [ ${#files[@]} -eq 0 ]; then echo "no sketches to post"; exit 0; fi
+          args=(-F 'payload_json={"content":"🎨 GUIデザイン案ができました（自動採用は案1。全案はこちら）"}')
+          i=0; for f in "${files[@]}"; do args+=(-F "files[$i]=@$f"); i=$((i+1)); done
+          code=$(curl -s -o /tmp/sk.txt -w "%{http_code}" \
+            "${DISCORD_WEBHOOK_URL}?thread_id=${THREAD_ID}" "${args[@]}" || echo "000")
+          echo "sketch post HTTP $code"
+          if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+            echo "::warning::sketch post failed ($code): $(head -c 200 /tmp/sk.txt 2>/dev/null)"
+          fi
+
       - name: Validate generated app
         if: ${{ needs.setup.outputs.project_type == 'app' }}
         run: python scripts/validate_generated.py ./out/code ./out/VALIDATION.md
