@@ -49,8 +49,10 @@ def main() -> None:
         channel_map = {int(hw): "hardware", int(app): "app"}
     else:
         forum = _require("DISCORD_FORUM_CHANNEL_ID")
-        channel_map = {int(forum): "hardware"}  # default; /app prefix overrides
-        print(f"Single-channel intake on {forum} (use /app or /hardware prefix).")
+        # Default to "app" (hardware needs a self-hosted runner); /hardware prefix
+        # overrides. Most posts are apps and app routes to the hosted runner.
+        channel_map = {int(forum): "app"}
+        print(f"Single-channel intake on {forum} (prefix /app or /hardware; default app).")
 
     bot = build_dispatch_bot(
         bot_token=token,
