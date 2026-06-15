@@ -34,6 +34,29 @@ def resolve_project_type(parent_channel_id: int, channel_map: dict[int, str]) ->
     return channel_map.get(parent_channel_id)
 
 
+# Leading slash-prefixes that declare the project type in a post (tolerant of
+# the owner's common typos). Checked before the channel mapping.
+_TYPE_PREFIXES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("app", ("/app", "/application", "/アプリ")),
+    ("hardware", ("/hardware", "/hardwere", "/hw", "/ハード")),
+)
+
+
+def infer_type_from_text(text: str) -> tuple[str | None, str]:
+    """Detect a leading /app or /hardware prefix; return (type|None, stripped).
+
+    The prefix wins over the channel mapping so a single forum channel can carry
+    both project types. Returns the original text unchanged when no prefix.
+    """
+    stripped = (text or "").lstrip()
+    low = stripped.lower()
+    for ptype, prefixes in _TYPE_PREFIXES:
+        for p in prefixes:
+            if low.startswith(p):
+                return ptype, stripped[len(p):].lstrip()
+    return None, text
+
+
 def build_dispatch_payload(
     requirement: str, project_type: str, thread_id: str | None
 ) -> dict[str, Any]:
@@ -119,11 +142,18 @@ def build_dispatch_bot(
     async def _handle_thread(thread: "discord.Thread") -> None:
         if thread.id in _seen or thread.parent_id not in watched:
             return
-        project_type = resolve_project_type(thread.parent_id, channel_map)
-        if project_type is None:
-            return
+        # Claim the thread *before* any await so concurrent events (on_thread_create
+        # + on_message + poll) can't double-dispatch the same project.
         _seen.add(thread.id)
         requirement = await _requirement_of(thread)
+        # A /app or /hardware prefix wins over the channel mapping; falls back to
+        # the channel's mapped type, then "hardware".
+        prefix_type, requirement = infer_type_from_text(requirement)
+        project_type = (
+            prefix_type
+            or resolve_project_type(thread.parent_id, channel_map)
+            or "hardware"
+        )
         payload = build_dispatch_payload(requirement, project_type, str(thread.id))
         print(f"[intake] dispatch type={project_type} thread={thread.id} req={requirement!r:.60}")
         try:

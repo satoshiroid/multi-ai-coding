@@ -38,12 +38,19 @@ def main() -> None:
     load_env()
 
     token = _require("DISCORD_BOT_TOKEN")
-    hardware_channel = int(_require("HARDWARE_CHANNEL_ID"))
-    app_channel = int(_require("APP_CHANNEL_ID"))
     github_repo = _require("GITHUB_REPO")
     github_token = _require("GITHUB_DISPATCH_TOKEN")
 
-    channel_map = {hardware_channel: "hardware", app_channel: "app"}
+    # Two channels (channel→type) if configured; otherwise a single forum where
+    # the /app or /hardware post prefix decides the type.
+    hw = os.environ.get("HARDWARE_CHANNEL_ID")
+    app = os.environ.get("APP_CHANNEL_ID")
+    if hw and app:
+        channel_map = {int(hw): "hardware", int(app): "app"}
+    else:
+        forum = _require("DISCORD_FORUM_CHANNEL_ID")
+        channel_map = {int(forum): "hardware"}  # default; /app prefix overrides
+        print(f"Single-channel intake on {forum} (use /app or /hardware prefix).")
 
     bot = build_dispatch_bot(
         bot_token=token,

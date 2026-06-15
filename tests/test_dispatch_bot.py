@@ -7,8 +7,18 @@ import pytest
 from src.interfaces.dispatch_bot import (
     build_dispatch_bot,
     build_dispatch_payload,
+    infer_type_from_text,
     resolve_project_type,
 )
+
+
+def test_infer_type_from_prefix():
+    assert infer_type_from_text("/app メモ帳を作る") == ("app", "メモ帳を作る")
+    # tolerant of the common typo
+    assert infer_type_from_text("/hardwere 分割キーボード")[0] == "hardware"
+    # no prefix → None, text unchanged
+    t, txt = infer_type_from_text("ただの要件")
+    assert t is None and txt == "ただの要件"
 
 CHANNEL_MAP = {111: "hardware", 222: "app"}
 
