@@ -4,90 +4,130 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Task Manager</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>File Comparison Tool</title>
     <style>
-        .expired { background-color: #FEE2E2; color: #DC2626; }
+        body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
+        #container { display: flex; flex-direction: row; height: 100vh; }
+        #viewer-left, #viewer-right { flex: 1; overflow: auto; position: relative; }
+        canvas { width: 100%; height: auto; }
+        #controls { position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%); }
+        #controls button { margin: 0 5px; }
+        @media (max-width: 768px) {
+            #container { flex-direction: column; }
+        }
     </style>
 </head>
-<body class="bg-gray-100 p-6">
-    <div class="max-w-xl mx-auto bg-white p-4 rounded shadow">
-        <h1 class="text-2xl font-bold mb-4">Task Manager</h1>
-        <form id="task-form" class="mb-4">
-            <input type="text" id="title" placeholder="Task Title" class="border p-2 w-full mb-2" required>
-            <textarea id="detail" placeholder="Task Details" class="border p-2 w-full mb-2"></textarea>
-            <input type="date" id="dueDate" class="border p-2 w-full mb-2">
-            <button type="submit" class="bg-blue-500 text-white p-2 rounded">Add Task</button>
-        </form>
-        <ul id="task-list" class="list-none"></ul>
+<body>
+    <div id="container">
+        <div id="viewer-left"></div>
+        <div id="viewer-right"></div>
     </div>
+    <div id="controls">
+        <button id="prev">Previous</button>
+        <span id="page-info">Page: 1 / 1</span>
+        <button id="next">Next</button>
+        <button id="zoom-in">Zoom In</button>
+        <button id="zoom-out">Zoom Out</button>
+        <button id="diff-toggle">Toggle Diff</button>
+    </div>
+    <input type="file" id="file-input-left" accept=".pptx,.png,.jpg,.jpeg,.webp" style="display:none;" multiple>
+    <input type="file" id="file-input-right" accept=".pptx,.png,.jpg,.jpeg,.webp" style="display:none;" multiple>
+    <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.4.0/dist/pptxgen.min.js"></script>
     <script>
-        const taskList = document.getElementById('task-list');
-        const taskForm = document.getElementById('task-form');
-        let tasks = JSON.parse(localStorage.getItem('todo_tasks')) || [];
+        let currentPage = 0;
+        let zoomLevel = 1.0;
+        let leftPages = [];
+        let rightPages = [];
+        let diffMode = false;
 
-        function saveTasks() {
-            localStorage.setItem('todo_tasks', JSON.stringify(tasks));
+        document.getElementById('prev').addEventListener('click', () => changePage(-1));
+        document.getElementById('next').addEventListener('click', () => changePage(1));
+        document.getElementById('zoom-in').addEventListener('click', () => changeZoom(0.1));
+        document.getElementById('zoom-out').addEventListener('click', () => changeZoom(-0.1));
+        document.getElementById('diff-toggle').addEventListener('click', toggleDiff);
+
+        function changePage(delta) {
+            const maxPage = Math.max(leftPages.length, rightPages.length) - 1;
+            currentPage = Math.min(maxPage, Math.max(0, currentPage + delta));
+            renderPage(currentPage);
         }
 
-        function renderTasks() {
-            taskList.innerHTML = '';
-            tasks.forEach(task => {
-                const li = document.createElement('li');
-                li.className = `p-2 mb-2 border rounded ${task.completed ? 'line-through text-gray-500' : ''} ${!task.completed && new Date(task.dueDate) < new Date() ? 'expired' : ''}`;
-                li.innerHTML = `
-                    <input type="checkbox" ${task.completed ? 'checked' : ''} onclick="toggleComplete('${task.id}')">
-                    <span contenteditable="true" onblur="editTask('${task.id}', this)">${task.title}</span>
-                    <button onclick="deleteTask('${task.id}')" class="text-red-500 ml-2">Delete</button>
-                    <div class="text-sm">${task.detail}</div>
-                    <div class="text-xs">Due: ${task.dueDate || 'No deadline'}</div>
-                `;
-                taskList.appendChild(li);
+        function changeZoom(delta) {
+            zoomLevel = Math.min(2.0, Math.max(0.5, zoomLevel + delta));
+            document.querySelectorAll('canvas').forEach(canvas => {
+                canvas.style.transform = `scale(${zoomLevel})`;
             });
         }
 
-        function addTask(title, detail, dueDate) {
-            const newTask = {
-                id: Date.now().toString(),
-                title,
-                detail,
-                dueDate,
-                completed: false
-            };
-            tasks.push(newTask);
-            saveTasks();
-            renderTasks();
+        function toggleDiff() {
+            diffMode = !diffMode;
+            renderPage(currentPage);
         }
 
-        function deleteTask(id) {
-            tasks = tasks.filter(task => task.id !== id);
-            saveTasks();
-            renderTasks();
+        function renderPage(index) {
+            const leftViewer = document.getElementById('viewer-left');
+            const rightViewer = document.getElementById('viewer-right');
+            leftViewer.innerHTML = '';
+            rightViewer.innerHTML = '';
+
+            if (index < leftPages.length) {
+                leftViewer.appendChild(leftPages[index]);
+            } else {
+                leftViewer.innerHTML = `<div style='background: gray;'>No page (${index + 1}/${leftPages.length})</div>`;
+            }
+
+            if (index < rightPages.length) {
+                rightViewer.appendChild(rightPages[index]);
+            } else {
+                rightViewer.innerHTML = `<div style='background: gray;'>No page (${index + 1}/${rightPages.length})</div>`;
+            }
+
+            if (diffMode) {
+                highlightDifferences();
+            }
+
+            document.getElementById('page-info').textContent = `Page: ${index + 1} / ${Math.max(leftPages.length, rightPages.length)}`;
         }
 
-        function toggleComplete(id) {
-            const task = tasks.find(task => task.id === id);
-            task.completed = !task.completed;
-            saveTasks();
-            renderTasks();
+        function highlightDifferences() {
+            // Placeholder for diff logic
+            console.log('Diff mode active');
         }
 
-        function editTask(id, element) {
-            const task = tasks.find(task => task.id === id);
-            task.title = element.textContent;
-            saveTasks();
+        // File handling logic
+        document.getElementById('file-input-left').addEventListener('change', handleFileSelect);
+        document.getElementById('file-input-right').addEventListener('change', handleFileSelect);
+
+        function handleFileSelect(event) {
+            const files = event.target.files;
+            const isLeft = event.target.id === 'file-input-left';
+            const pages = isLeft ? leftPages : rightPages;
+            pages.length = 0; // Clear existing pages
+
+            Array.from(files).forEach(file => {
+                if (file.type.includes('image')) {
+                    const img = new Image();
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        const ctx = canvas.getContext('2d');
+                        canvas.width = img.width;
+                        canvas.height = img.height;
+                        ctx.drawImage(img, 0, 0);
+                        pages.push(canvas);
+                        if (pages.length === 1) renderPage(currentPage);
+                    };
+                    img.src = URL.createObjectURL(file);
+                } else if (file.name.endsWith('.pptx')) {
+                    // Handle PPTX files
+                    console.log('PPTX file handling not implemented');
+                } else {
+                    alert('Unsupported file type');
+                }
+            });
         }
 
-        taskForm.addEventListener('submit', event => {
-            event.preventDefault();
-            const title = document.getElementById('title').value;
-            const detail = document.getElementById('detail').value;
-            const dueDate = document.getElementById('dueDate').value;
-            addTask(title, detail, dueDate);
-            taskForm.reset();
-        });
-
-        renderTasks();
+        // Initial render
+        renderPage(currentPage);
     </script>
 </body>
 </html>

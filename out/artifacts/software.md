@@ -2,4 +2,4 @@
 
 ## setup
 
-Open index.html in a web browser to run the task manager app.
+Open index.html in a browser to use the app.

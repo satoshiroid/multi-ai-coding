@@ -4,9 +4,9 @@
 
 ```json
 [
-  "Design a minimalist task management app UI with a light color scheme. Use a white background with blue accents for active tasks, green for completed tasks, and red for overdue warnings. Arrange a fixed header at the top, a task addition form below it, and a scrollable task list area. Each task card should have a title, details, due date, a checkbox for completion, and edit/delete buttons.",
-  "Create a dark-themed task management app UI. Utilize a dark gray background with neon blue for active tasks, lime green for completed tasks, and bright red for overdue warnings. The layout should feature a collapsible side menu, a central task list area, and a floating action button for adding tasks. Task cards should include a title, details, due date, completion checkbox, and action icons for edit/delete.",
-  "Design a vibrant task management app UI with a colorful palette. Use a gradient background transitioning from purple to pink, with white text for active tasks, light green for completed tasks, and orange for overdue warnings. Implement a top navigation bar, a task input field at the bottom, and a grid layout for task cards. Each card should display a title, details, due date, a toggle for completion, and buttons for edit/delete."
+  "Design a sleek, modern UI with a dark theme. Use a high-contrast color scheme with neon accents for interactive elements. The header should feature a minimalistic app title centered, with file upload buttons on either side. The main area is divided into two equal columns with slide viewers, and the footer contains navigation controls with a futuristic look.",
+  "Create a clean, professional UI with a light theme. Utilize a blue and white color palette for a business-friendly appearance. The header includes the app title on the left and file upload buttons on the right. The main area is split into two columns for slide viewing, and the footer has simple, intuitive navigation controls with clear labels.",
+  "Design a vibrant, user-friendly UI with a playful tone. Use a pastel color scheme with rounded edges for all components. The header features a large, bold app title with upload buttons below it. The main area is two-column with slide viewers, and the footer has oversized, colorful navigation buttons for easy interaction."
 ]
 ```
 
@@ -15,79 +15,31 @@
 ```json
 {
   "screens": [
-    "Home",
-    "Task Details",
-    "Edit Task"
+    "Main Screen"
   ],
   "components": {
-    "header": {
-      "position": "top",
-      "elements": [
-        "logo",
-        "navigation"
-      ]
-    },
-    "task_addition_form": {
-      "position": "below_header",
-      "elements": [
-        "input_field",
-        "add_button"
-      ]
-    },
-    "task_list_area": {
-      "position": "center",
-      "elements": [
-        "task_cards"
-      ]
-    },
-    "task_card": {
-      "elements": [
-        "title",
-        "details",
-        "due_date",
-        "completion_checkbox",
-        "edit_button",
-        "delete_button"
-      ]
-    },
-    "modal_edit_form": {
-      "elements": [
-        "title_input",
-        "details_input",
-        "due_date_picker",
-        "save_button",
-        "cancel_button"
-      ]
-    }
+    "header": [
+      "App Title",
+      "File Upload Buttons"
+    ],
+    "main_area": [
+      "Left Slide Viewer",
+      "Right Slide Viewer"
+    ],
+    "footer": [
+      "Page Navigation Buttons",
+      "Page Number Display",
+      "Zoom Controls",
+      "Difference Highlight Toggle"
+    ]
   },
   "transitions": {
-    "home_to_task_details": "tap_task_card",
-    "task_details_to_edit_task": "tap_edit_button",
-    "edit_task_to_home": "tap_save_button"
+    "file_upload": "Auto-display page 1",
+    "page_sync": "Sync page numbers",
+    "zoom": "Simultaneous zoom",
+    "highlight_toggle": "Pixel difference overlay"
   },
-  "colors": {
-    "active_task": {
-      "background": "#FFFFFF",
-      "text": "#0000FF"
-    },
-    "completed_task": {
-      "background": "#00FF00",
-      "text": "#FFFFFF"
-    },
-    "overdue_task": {
-      "background": "#FF0000",
-      "text": "#FFFFFF"
-    }
-  },
-  "typography": {
-    "font_family": "Arial, sans-serif",
-    "font_size": "14px",
-    "font_weight": "normal"
-  },
-  "design_tokens": {
-    "spacing": "8px",
-    "border_radius": "4px",
-    "box_shadow": "0 2px 4px rgba(0,0,0,0.1)"
-  }
+  "color_scheme": "High contrast, business-friendly",
+  "typography": "Sans-serif, clear readability"
 }
 ```
