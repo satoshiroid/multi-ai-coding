@@ -4,9 +4,9 @@
 
 ```json
 [
-  "Design a minimalist task management app UI with a light color scheme. Use a white background with blue accents for active tasks, green for completed tasks, and red for overdue warnings. Arrange a fixed header at the top, a task addition form below it, and a scrollable task list area. Each task card should have a title, details, due date, a checkbox for completion, and edit/delete buttons.",
-  "Create a dark-themed task management app UI. Utilize a dark gray background with neon blue for active tasks, lime green for completed tasks, and bright red for overdue warnings. The layout should feature a collapsible side menu, a central task list area, and a floating action button for adding tasks. Task cards should include a title, details, due date, completion checkbox, and action icons for edit/delete.",
-  "Design a vibrant task management app UI with a colorful palette. Use a gradient background transitioning from purple to pink, with white text for active tasks, light green for completed tasks, and orange for overdue warnings. Implement a top navigation bar, a task input field at the bottom, and a grid layout for task cards. Each card should display a title, details, due date, a toggle for completion, and buttons for edit/delete."
+  "Design a clean, minimalist UI with a white and light gray color palette. The top section features a drag-and-drop area for uploading PPTX files, with a prominent upload button. Below, a two-column layout displays slides side by side with a thin separator and page number labels. Include a toggle switch in the header for difference highlighting.",
+  "Create a vibrant, modern UI using a blue and green color scheme. The top area includes a bold, rounded upload button and drag-and-drop zone. The main section has a two-column layout with slides aligned horizontally, separated by a thick line and page numbers. A toggle button for highlighting differences is placed in the header.",
+  "Design a professional, dark-themed UI with a black and dark blue color palette. The top section features a sleek drag-and-drop area and a subtle upload button. The slide comparison area uses a two-column layout with thin dividers and page numbers, and a toggle switch for highlighting differences is integrated into the header."
 ]
 ```
 
@@ -15,79 +15,44 @@
 ```json
 {
   "screens": [
-    "Home",
-    "Task Details",
-    "Edit Task"
+    "Upload Screen",
+    "Comparison Screen"
   ],
   "components": {
-    "header": {
+    "Upload Area": {
       "position": "top",
-      "elements": [
-        "logo",
-        "navigation"
+      "features": [
+        "drag-and-drop",
+        "upload button"
       ]
     },
-    "task_addition_form": {
-      "position": "below_header",
-      "elements": [
-        "input_field",
-        "add_button"
-      ]
-    },
-    "task_list_area": {
-      "position": "center",
-      "elements": [
-        "task_cards"
-      ]
-    },
-    "task_card": {
-      "elements": [
-        "title",
-        "details",
-        "due_date",
-        "completion_checkbox",
-        "edit_button",
-        "delete_button"
-      ]
-    },
-    "modal_edit_form": {
-      "elements": [
-        "title_input",
-        "details_input",
-        "due_date_picker",
-        "save_button",
-        "cancel_button"
+    "Comparison Layout": {
+      "type": "two-column",
+      "features": [
+        "scrollable slides",
+        "page number labels",
+        "difference toggle"
       ]
     }
   },
   "transitions": {
-    "home_to_task_details": "tap_task_card",
-    "task_details_to_edit_task": "tap_edit_button",
-    "edit_task_to_home": "tap_save_button"
+    "Upload to Comparison": "on file upload"
   },
-  "colors": {
-    "active_task": {
-      "background": "#FFFFFF",
-      "text": "#0000FF"
-    },
-    "completed_task": {
-      "background": "#00FF00",
-      "text": "#FFFFFF"
-    },
-    "overdue_task": {
-      "background": "#FF0000",
-      "text": "#FFFFFF"
-    }
+  "responsive_design": {
+    "desktop": "50% columns",
+    "mobile": "tab switch"
   },
+  "color_palette": [
+    "primary: #007BFF",
+    "secondary: #6C757D",
+    "background: #F8F9FA"
+  ],
   "typography": {
     "font_family": "Arial, sans-serif",
-    "font_size": "14px",
-    "font_weight": "normal"
-  },
-  "design_tokens": {
-    "spacing": "8px",
-    "border_radius": "4px",
-    "box_shadow": "0 2px 4px rgba(0,0,0,0.1)"
+    "font_sizes": {
+      "header": "24px",
+      "body": "16px"
+    }
   }
 }
 ```
